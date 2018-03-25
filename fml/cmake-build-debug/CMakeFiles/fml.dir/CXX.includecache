@@ -1,0 +1,22 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/tzlil/CLionProjects/fml/main.cpp
+iostream
+-
+skiplist.h
+/home/tzlil/CLionProjects/fml/skiplist.h
+string
+-
+
+/home/tzlil/CLionProjects/fml/skiplist.h
+iostream
+-
+sstream
+-
+
