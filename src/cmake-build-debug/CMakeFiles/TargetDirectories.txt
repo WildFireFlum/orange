@@ -1,3 +1,0 @@
-/home/tzlil/CLionProjects/fml/cmake-build-debug/CMakeFiles/rebuild_cache.dir
-/home/tzlil/CLionProjects/fml/cmake-build-debug/CMakeFiles/edit_cache.dir
-/home/tzlil/CLionProjects/fml/cmake-build-debug/CMakeFiles/fml.dir
