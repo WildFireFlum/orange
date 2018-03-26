@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.9)
 project(fml)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 add_subdirectory(lib/googletest-master)
 include_directories(lib/googletest-master/googletest/include)
 include_directories(lib/googletest-master/googlemock/include)
 remove_definitions(-D__STRICT_ANSI__)
-add_executable(fml main.cpp pq.h chunk.h consts.h rebalance_data.h chunk.hpp Tests/ChunkTest.cpp)
+add_executable(fml main.cpp pq.h chunk.h consts.h chunk.hpp Tests/ChunkTest.cpp)
 target_link_libraries(fml gtest gtest_main)

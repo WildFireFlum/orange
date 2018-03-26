@@ -6,13 +6,17 @@
 #include <cstdint>
 #include <utility>
 #include "consts.h"
-#include "rebalance_data.h"
 
-// The Keys in the queue
+/// The Keys in the queue
 using Key = uint32_t;
 
-// The status of a chunk, indicating whether it is mutable or not
+/// The status of a chunk, indicating whether it is mutable or not
 enum class Status { infant, normal, frozen };
+
+/// An object holding information needed to linearize rebalances
+struct RebalanceObject {
+  enum Status status;
+};
 
 /**
  * An element in the queue
@@ -35,9 +39,9 @@ class Chunk {
    * @param min_key The minimal key of the chunk
    * @param parent The previous chunk?
    */
-  Chunk(const Key& min_key, const Chunk& parent);
+  Chunk(const Key& min_key, const Chunk* parent);
 
-  void put(const Key& key, Val& val);
+  void put(const Key& key, const Val& val);
 
  private:
   /**
@@ -46,14 +50,14 @@ class Chunk {
    * @param val The value to be inserted
    * @note Dependant on policy
    */
-  bool checkRebalance(const Key& key, Val& val);
+  bool checkRebalance(const Key& key, const Val& val);
 
   /**
    * Rebalances a collection of chunks according to policy
    * @param key The key to be inserted
    * @param val The value to be inserted
    */
-  bool rebalance(const Key& key, Val& val);
+  bool rebalance(const Key& key, const Val& val);
 
   /**
    * Does something
@@ -79,15 +83,15 @@ class Chunk {
   std::atomic<int32_t>
       m_pppa[NUMBER_OF_THREADS];  // negative indices for mark as freeze
 
-  // TODO: might not be needed
-  std::atomic<uint32_t> m_count;
+  /// The index the next put will assign to
+  std::atomic<uint32_t> m_current_index;
 
   /// The next chunk in the list
   std::atomic<Chunk*> m_next;
 
   Status m_rebalance_status;
   Chunk* m_rebalance_parent;
-  RebalanceData m_rebalance_data;
+  RebalanceObject m_rebalance_data;
 };
 
 #include "chunk.hpp"
