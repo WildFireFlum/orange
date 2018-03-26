@@ -46,7 +46,7 @@ void Chunk<Val>::put(const Key& key, Val& val) {
   if (checkRebalance(key, val)) {
     return;  // required rebalance completed the put
   }
-  uint32_t i = this->m_count.fetch_add(1);
+  uint32_t i = m_count.fetch_add(1);
   m_v[i] = val;
   m_k[i].m_index = i;
   m_k[i].m_key = key;
