@@ -10,7 +10,12 @@
 
 template <typename T>
 struct RebalanceData {
-    enum Status status;
+    RebalanceData(Chunk* first, Chunk* next);
+    Chunk* m_first;
+    std::atomic<Chunk*> m_next;
 };
+
+template<typename T>
+RebalanceData<T>::RebalanceData(Chunk *first, Chunk *next) : m_first(first), m_next(next) {}
 
 #endif //FML_REBALANCE_DATA_H
