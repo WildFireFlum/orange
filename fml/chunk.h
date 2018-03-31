@@ -52,7 +52,7 @@ struct Chunk {
 
   enum checkRebalncedResult checkRebalance(uint64_t key, V& val);
 
-  bool rebalance(uint64_t key, V& val);
+  bool rebalance(K_Element* new_key);
 
   bool put(uint32_t key, V& val);
 
@@ -68,8 +68,8 @@ struct Chunk {
   bool policy();
 
   // main list info
-  uint64_t m_min_key;          // the minimal key in the chunk
-  std::atomic<Chunk*> m_next;  // TODO: should be atomic markable refernce
+  uint64_t m_min_key;                       // the minimal key in the chunk
+  AtomicMarkableReference<Chunk> m_next;    // next chunk
 
   // inner list info
   K_Element m_begin_sentinel;  // sorted list begin sentinel (-infinity)
@@ -88,7 +88,7 @@ struct Chunk {
 
 Chunk::Chunk(uint64_t min_key, Chunk* rebalance_parent)
     : m_min_key(min_key),
-      m_next(nullptr),
+      m_next(nullptr, false),
       m_end_sentinel(UINT_FAST64_MAX, nullptr, nullptr),
       m_begin_sentinel(0, &m_end_sentinel, nullptr),
       m_rebalance_status(INFANT),
@@ -125,22 +125,22 @@ bool Chunk<V>::policy() {
 }
 
 template <typename V>
-bool Chunk<V>::rebalance(uint64_t key, V& val) {
+bool Chunk<V>::rebalance(K_Element* new_key) {
   // 1. engage
-  RebalanceData* ro = new RebalanceData(this, this->m_next);
+  RebalanceData* ro = new RebalanceData(this, this->m_next.getRef());
   if (!this->m_rebalance_data.compare_exchange_strong(nullRebalancedDataPtr,
                                                       ro)) {
     free(ro);
   }
   ro = this->m_rebalance_data;
   Chunk* last = this;
-  while (ro->m_next != NULL) {
+  while (ro->m_next != nullptr) {
     Chunk* next = ro->m_next;
     if (next->policy()) {
       next->m_rebalance_data.compare_exchange_strong(nullRebalancedDataPtr, ro);
 
       if (next->m_rebalance_data == ro) {
-        ro->m_next.compare_exchange_strong(next, next->m_next);
+        ro->m_next.compare_exchange_strong(next, next->m_next.getRef());
         last = next;
       } else {
         ro->m_next.compare_exchange_strong(next, nullptr);
@@ -150,13 +150,8 @@ bool Chunk<V>::rebalance(uint64_t key, V& val) {
     }
   }
 
-  while (last->m_next) {
-    Chunk* next = last->m_next;
-    if (next->m_rebalance_data == ro) {
-      last = next;
-    } else {
-      break;
-    }
+  while (last->m_next.getRef()->m_rebalance_data == ro) {
+      last = last->m_next.getRef();
   }
 
   // 2. freeze
@@ -168,20 +163,21 @@ bool Chunk<V>::rebalance(uint64_t key, V& val) {
       K_Element* k = &this->m_k[i];
       uint64_t z;
       while (!((z = k->m_key) & FREEZE_MASK) &&
-             !k->m_key.compare_exchange_strong(z, z | FREEZE_MASK))
-        ;
+             !k->m_key.compare_exchange_strong(z, z | FREEZE_MASK));
     }
   }
 
   // 3. pick minimal version - (we don't have any ^^)
 
-  // 4. build
+  // 4. build:
   chunk = ro->m_next;
+    // TODO: size can be calculated - we need to check if it is more efficient or not...
   std::vector<K_Element> v;
 
   // add the new key, val
-  K_Element new_key(key, nullptr, &val);
-  v.push_back(new_key);
+    if (new_key) {
+        v.push_back(*new_key);
+    }
 
   // add all non deleted keys in the range
   do {
@@ -193,56 +189,56 @@ bool Chunk<V>::rebalance(uint64_t key, V& val) {
                                      // at this point
       }
     }
-  } while ((chunk != last) && (chunk = chunk->m_next));
+  } while ((chunk != last) && (chunk = chunk->m_next.getRef()));
 
   // sort the keys
   std::sort(v.begin(), v.end());
 
   // create new chunk TODO: should use memory allocation mechanism
   Chunk* Cn = new Chunk(v[0].m_key, this);
-  Cn->m_begin_sentinel.m_next = &Cn->m_k[0];
+  Cn->m_begin_sentinel.m_next.set(&Cn->m_k[0], false);
   Chunk* Cf = Cn;
 
   // arrange the keys (and values) in a list of new chunks
   for (auto& k : v) {
     if (Cn->m_count > (CHUNK_SIZE / 2)) {
       // more than half full - create new one
-      Cn->m_k[Cn->m_count - 1].m_next = &Cn->m_end_sentinel;
-      Cn->m_next = new Chunk(k.m_key, this);
-      Cn = Cn->m_next;
-      Cn->m_begin_sentinel.m_next = &Cn->m_k[0];
+      Cn->m_k[Cn->m_count - 1].m_next.set(&Cn->m_end_sentinel, false);
+      Cn->m_next.set(new Chunk(k.m_key, this), false);
+      Cn = Cn->m_next.getRef();
+      Cn->m_begin_sentinel.m_next.set(&Cn->m_k[0], false);
     }
     uint64_t tmp = k.m_key;
-    Cn->m_k[Cn->m_count].m_key = tmp & ~FLAGS_MASK;  // set key without flags
-    *Cn->m_k[Cn->m_count].m_value = *k.m_value;      // copy the value
-    Cn->m_k[Cn->m_count].m_next =
-        &Cn->m_k[Cn->m_count + 1];  // set list pointer
+      K_Element& k_element = Cn->m_k[Cn->m_count];
+      k_element.m_key = tmp & ~FLAGS_MASK;                    // set key without flags
+      *k_element.m_value = *k.m_value;                        // copy the value
+      k_element.m_next.set(&Cn->m_k[Cn->m_count + 1], false); // set list pointer
     Cn->m_count++;
   }
 
   // 5. replace
-  // TODO: true and false for atomic markable reference shit...
-  // in general this part is not so clear - pred ? help rebalance pred?
-  do {
-    Cn->m_next = last->m_next;
-  } while (!last->m_next.compare_exchange_strong(Cn->m_next + false,
-                                                 Cn->m_next + true));
+
+    bool curr_mark = false;
+    Chunk* curr_ref;
+    do {
+        curr_ref = last->m_next.getMarkAndRef(curr_mark);
+    } while (!last->m_next.compareAndSet(curr_ref, curr_ref, false, true));
 
   Chunk* pred = this predecessor;  // TODO: read in the paper how they get the
                                    // predecessor...
 
   do {
-    if (pred->m_next.compare_exchange_strong(this + false, Cf + false)) {
+    if (pred->m_next.compareAndSet(this, Cf, false, false)) {
       this->normalize();
       return true;
     }
 
-    if ((chunk = pred->m_next)->m_rebalance_parent == this) {
+    if (pred->m_next.getRef()->m_rebalance_parent == this) {
       this->normalize();
       return false;
     }
     // TODO: support rebalance without key, val
-    pred->rebalance();
+    pred->rebalance(nullptr);
   } while (true);
 }
 
@@ -251,7 +247,7 @@ bool Chunk<V>::rebalance(uint64_t key, V& val) {
 
 
 template <typename V>
-void Chunk<V>::add_to_list(K_Element<V>* key) {
+bool Chunk<V>::add_to_list(K_Element<V>* key) {
   // TODO: required atomic marakable reference
 }
 
@@ -283,8 +279,7 @@ bool Chunk<V>::put(uint32_t key, V& val) {
     return this->rebalance(unique_key, val);
   }
 
-  // we successfully added the key to m_k - TODO: connect it to the sorted list
-  // of the chunk
+    this->add_to_list(&this->m_k[i]);
 
   return true;
 }
