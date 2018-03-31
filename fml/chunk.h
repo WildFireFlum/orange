@@ -10,10 +10,11 @@
 
 #include "consts.h"
 #include "rebalance_data.h"
+#include "AtomicMarkableReference.h"
 
 constexpr unsigned long long FREEZE_MASK = 1ULL;
-#define DELETED_MASK 2ULL
-#define FLAGS_MASK (FREEZE_MASK | DELETED_MASK)
+constexpr unsigned long long DELETED_MASK = 2ULL;
+constexpr unsigned long long FLAGS_MASK (FREEZE_MASK | DELETED_MASK);
 
 enum Status { INFANT, NORMAL, FROZEN };
 
@@ -21,18 +22,25 @@ enum checkRebalncedResult { NOT_REQUIRED, ADDED_KEY_VAL, NOT_ADDED_KEY_VAL };
 
 template <typename V>
 struct K_Element {
-  std::atomic<uint64_t> m_key;
-  std::atomic<K_Element*> m_next;  // TODO: atomic markable reference
+  std::atomic<uint64_t> m_key{};
+  AtomicMarkableReference<K_Element> m_next;
   V* m_value;
 
+  K_Element();
+
   K_Element(uint64_t key, K_Element* next, V* value)
-      : m_key(key), m_next(next), m_value(value) {}
+      : m_key(key), m_next(next, false), m_value(value) {}
 
   bool operator<(const struct K_Element& other) const;
 };
 
 bool K_Element::operator<(const struct K_Element& other) const {
   return this->m_key < other.m_key;
+}
+
+template<typename V>
+K_Element<V>::K_Element(): m_key(0), m_next(nullptr, false), m_value(nullptr) {
+
 }
 
 static RebalanceData nullRebalancedData(nullptr, nullptr);
@@ -50,8 +58,9 @@ struct Chunk {
 
   bool delete_min(std::pair<uint32_t, V>* out);
 
-  void add_to_list(K_Element<V>* key);
 
+  std::pair<K_Element*, K_Element*> find(uint64_t key);
+  void add_to_list(K_Element<V>* key);
   void remove_from_list(K_Element<V>* key);
 
   void normalize();
@@ -237,6 +246,10 @@ bool Chunk<V>::rebalance(uint64_t key, V& val) {
   } while (true);
 }
 
+
+
+
+
 template <typename V>
 void Chunk<V>::add_to_list(K_Element<V>* key) {
   // TODO: required atomic marakable reference
@@ -288,7 +301,7 @@ bool Chunk<V>::delete_min(std::pair<uint32_t, V>* out) {
   }
 
   uint64_t z;
-  K_Element* curr = this->m_begin_sentinel.m_next;
+  K_Element* curr = this->m_begin_sentinel.m_next.getRef();
   while (curr < &this->m_end_sentinel) {
     if (((z = curr->m_key) & FLAGS_MASK) &&
         curr->m_key.compare_exchange_strong(z, z | DELETED_MASK)) {
@@ -297,10 +310,39 @@ bool Chunk<V>::delete_min(std::pair<uint32_t, V>* out) {
       this->remove_from_list(curr);
       return true;
     }
-    curr = curr->m_next;
+    curr = curr->m_next.getRef();
   }
 
   return false;
+}
+
+template<typename V>
+std::pair<K_Element*, K_Element*> Chunk<V>::find(uint64_t key) {
+    K_Element* pred = nullptr;
+    K_Element* curr = nullptr;
+    K_Element* succ = nullptr;
+
+    retry:
+    while (true) {
+        pred = &this->m_begin_sentinel;
+        curr = pred->m_next.getRef();
+        while (true) {
+            succ = curr->m_next.getRef();
+            bool marked = true;
+            while (marked) {
+                if (!pred->m_next.compareAndSet(curr, succ, false, false)) {
+                    goto retry;
+                }
+                curr = succ;
+                succ = curr->m_next.getMarkAndRef(marked);
+            }
+            if (curr->m_key >= key) {
+                return std::pair<K_Element*, K_Element*>(pred, curr);
+            }
+            pred = curr;
+            curr = succ;
+        }
+    }
 }
 
 #include "chunk.hpp"
