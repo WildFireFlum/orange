@@ -60,8 +60,8 @@ struct Chunk {
 
 
   std::pair<K_Element*, K_Element*> find(uint64_t key);
-  bool add_to_list(K_Element<V>* item);
-  void remove_from_list(K_Element<V>* key);
+  bool add_to_list(K_Element<V>* key);
+  bool remove_from_list(K_Element<V>* key);
 
   void normalize();
 
@@ -282,8 +282,23 @@ bool Chunk<V>::put(uint32_t key, V& val) {
 }
 
 template <typename V>
-void Chunk<V>::remove_from_list(K_Element<V>* key) {
-  // TODO: require atomic marakable refernce
+bool Chunk<V>::remove_from_list(K_Element<V>* key) {
+    while (true) {
+        auto p = this->find(key->m_key);
+        K_Element* pred = p.first;
+        K_Element* curr = p.second;
+
+        if (curr->m_key != key->m_key) {
+            return false;
+        } else {
+            K_Element* succ = curr->m_next.getRef();
+            if (!curr->m_next.attemptMark(succ, true)) {
+                continue;
+            }
+            pred->m_next.compareAndSet(curr, succ, false, false);
+            return true;
+        }
+    }
 }
 
 template <typename V>
