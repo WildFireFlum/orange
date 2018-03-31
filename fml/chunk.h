@@ -60,7 +60,7 @@ struct Chunk {
 
 
   std::pair<K_Element*, K_Element*> find(uint64_t key);
-  void add_to_list(K_Element<V>* key);
+  bool add_to_list(K_Element<V>* item);
   void remove_from_list(K_Element<V>* key);
 
   void normalize();
@@ -247,14 +247,6 @@ bool Chunk<V>::rebalance(uint64_t key, V& val) {
 }
 
 
-
-
-
-template <typename V>
-void Chunk<V>::add_to_list(K_Element<V>* key) {
-  // TODO: required atomic marakable reference
-}
-
 template <typename V>
 bool Chunk<V>::put(uint32_t key, V& val) {
   switch (this->checkRebalance(key, val)) {
@@ -343,6 +335,26 @@ std::pair<K_Element*, K_Element*> Chunk<V>::find(uint64_t key) {
             curr = succ;
         }
     }
+}
+
+template<typename V>
+bool Chunk<V>::add_to_list(K_Element<V> *item) {
+    auto key = item->m_key.load();
+    while (true) {
+        auto prevNextPair(this->find(key));
+        K_Element<V>* pred = prevNextPair.first;
+        K_Element<V>* curr = prevNextPair.second;
+        if (curr->m_key == key) {
+            return false;
+        }
+        else {
+            item->m_next.set(curr, false);
+            if (pred->m_next.compareAndSet(curr, item, false, false)) {
+                return true;
+            }
+        }
+    }
+
 }
 
 #include "chunk.hpp"
