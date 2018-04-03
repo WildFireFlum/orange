@@ -2,94 +2,127 @@
 #define __PQ_H__
 
 #include "chunk.h"
+#include "index.h"
+#include <map>
+#include <set>
+#include <vector>
+#include <algorithm>
+#include <thread>
 
 template <typename V>
 struct PQ {
 
     PQ();
 
-    RebalncedCheckResult checkRebalance(Chunk<V>& chunk, uint32_t key, V& val);
-
-    bool rebalance(Chunk<V>& chunk, std::pair<uint32_t, V>* keyValPair);
-
     void put(uint32_t key, V& val);
 
-    bool delete_min(std::pair<uint32_t, V>* out);
 
-    Chunk m_begin_sentinel;
-    Chunk m_end_sentinel;
+private:
+    bool checkRebalance(Chunk<V>& chunk, uint32_t key, V& val);
+
+    void rebalance(Chunk<V>& chunk);
+
+    bool policy(const Chunk<V>& chunk);
+
+    void normalize(Chunk<V>& chunk);
+
+    Chunk<V>& locate_target_chunk(uint64_t key);
+
+    Index m_index;
+
+    std::atomic<uint32_t> m_thread_count;
 };
 
 template<typename V>
-PQ<V>::PQ() : m_begin_sentinel(0, nullRebalancedDataPtr), m_end_sentinel(UINT64_MAX, nullptr) {
-    this->m_begin_sentinel.m_next = &this->m_end_sentinel;
-}
+PQ<V>::PQ() : m_thread_count(0) {}
+
+// Thread local variables..
+Chunk* Cn = nullptr;
+Chunk* Cf = nullptr;
+Chunk* last = nullptr;
+uint32_t thread_id = UINT32_MAX;
+
 
 template<typename V>
 void PQ<V>::put(uint32_t key, V &val) {
-    Chunk* chunk;
-    PutStatus putStatus;
-    while (true) {
-        //TODO this is not good enough since we can't rebalance m_begin_sentinal
-        chunk = &this->m_begin_sentinel;
-        while (chunk->m_min_key > key) chunk = chunk->m_next.getRef();
+    uint64_t ukey = (key << 32) | (uint32_t)random();
+    Chunk& C = locate_target_chunk(ukey);
 
-        switch (checkRebalance(*chunk, key, val)) {
-            case RebalncedCheckResult::NOT_REQUIRED:
-                break;
-            case RebalncedCheckResult::ADDED_KEY_VAL:
-                return;
-            case RebalncedCheckResult::NOT_ADDED_KEY_VAL:
-                break;
-        }
-        putStatus = chunk->put(key, val);
-        if (putStatus == PutStatus::NEED_REBALANCE) {
-            auto pair = std::pair<uint32_t, V>(key, val);
-            if (rebalance(*chunk, &pair)) {
-                return;
-            }
-        }
+    if (checkRebalance(C, key, val)){
+        put(key, val);
+        return;
     }
+
+    uint32_t i = C.m_count.fetch_add(1);           // allocate cell in linked list
+
+    if (i >= CHUNK_SIZE) {
+        // no more free space - trigger rebalance
+        rebalance(C);
+        put(key, val);
+        return;
+    }
+
+    if (thread_id == UINT32_MAX) {
+        thread_id = m_thread_count.fetch_add(1);
+        // TODO: if thread_id >= NUMBER_OF_THREADS we should exit
+    }
+
+    // store key, and value
+    C.m_v[i] = val;
+    C.m_k[i].m_key = ukey;
+
+    PendingPut ppa_t = C.ppa[thread_id];
+    if ((ppa_t.m_status != PendingStatus::FROZEN) &&
+            !C.ppa[thread_id].compare_exchange_strong(ppa_t, PendingPut(PendingStatus::WORKING, i))) {
+        // C is being rebalanced
+        rebalance(C);
+        put(key, val);
+        return;
+    }
+
+    while (!C.addToList(C.m_k[i])) {
+        // TODO: handle the case we add failed
+    }
+
+    // reset ppa_t
+    C.ppa[thread_id].store(PendingPut());
 }
 
-template<typename Val>
-bool PQ<Val>::delete_min(std::pair<uint32_t, Val &> *out) {
-
-    return false;
-}
 
 template<typename V>
-RebalncedCheckResult PQ<V>::checkRebalance(Chunk<V> &chunk, uint32_t key, V &val) {
-    if (chunk.m_rebalance_status == Status::INFANT) {
-        chunk.m_rebalance_parent->normalize();
-        return RebalncedCheckResult::NOT_ADDED_KEY_VAL;
+bool PQ<V>::checkRebalance(Chunk<V> &C, uint32_t key, V &val) {
+    if (C.m_rebalance_status.load() == ChunkStatus::INFANT) {
+        // TODO: it is clear why they think it is enough to normalize at that point, but we don't have the required information (Cn, Cf, last are all nullptr...)
+        normalize(*C.m_rebalance_parent);
+        put(key, val);
+        return true;
     }
-    if (chunk.m_count >= CHUNK_SIZE || chunk.m_rebalance_status == Status::FROZEN ||
-            chunk.policy()) {
-        auto pair = std::pair(key, val);
-        return rebalance(chunk, &pair) ? RebalncedCheckResult::ADDED_KEY_VAL
-                                : RebalncedCheckResult::NOT_ADDED_KEY_VAL;
+    if (C.m_count >= CHUNK_SIZE || C.m_rebalance_status.load() == ChunkStatus::FROZEN || policy(C)) {
+        rebalance(C);
+        put(key, val);
+        return true;
     }
-    return RebalncedCheckResult::NOT_REQUIRED;
+    return false;
 }
 
 
 template <typename V>
-bool PQ<V>::rebalance(Chunk<V> &C, std::pair<uint32_t, V> *keyValPair) {
+void PQ<V>::rebalance(Chunk<V> &C) {
     // 1. engage
-    RebalanceData* ro = new RebalanceData(&C, C.m_next.getRef());
-    if (!C.m_rebalance_data.compare_exchange_strong(nullRebalancedDataPtr,
-                                                        ro)) {
-        free(ro);
+    RebalanceObject* tmp = new RebalanceObject(C, C.m_next.getRef());
+    RebalanceObject* ro_nullptr = nullptr;
+    if (!C.m_rebalance_object.compare_exchange_strong(ro_nullptr, tmp)) {
+        free(tmp);
     }
-    ro = C.m_rebalance_data;
-    Chunk* last = &C;
+    RebalanceObject* ro = C.m_rebalance_object;
+    last = &C;
     while (ro->m_next != nullptr) {
         Chunk* next = ro->m_next;
-        if (next->policy()) {
-            next->m_rebalance_data.compare_exchange_strong(nullRebalancedDataPtr, ro);
+        if (policy(*next)) {
+            ro_nullptr = nullptr;
+            next->m_rebalance_object.compare_exchange_strong(ro_nullptr, ro);
 
-            if (next->m_rebalance_data == ro) {
+            if (next->m_rebalance_object == ro) {
                 ro->m_next.compare_exchange_strong(next, next->m_next.getRef());
                 last = next;
             } else {
@@ -100,73 +133,56 @@ bool PQ<V>::rebalance(Chunk<V> &C, std::pair<uint32_t, V> *keyValPair) {
         }
     }
 
-    while (last->m_next.getRef()->m_rebalance_data == ro) {
+    while (last->m_next.getRef()->m_rebalance_object == ro) {
         last = last->m_next.getRef();
     }
 
     // 2. freeze
-    Chunk* chunk = ro->m_first;
-    while (chunk) {
-        chunk->m_rebalance_status = Status::FROZEN;
-        for (int i = 0; i < CHUNK_SIZE; i++) {
-            // TODO: can and should be improved
-            KeyElement* currElem = &C.m_k[i];
-            uint64_t currKey;
-            while (!((currKey = currElem->m_key) & FREEZE_MASK) &&
-                   !currElem->m_key.compare_exchange_strong(currKey, currKey | FREEZE_MASK));
+    Chunk& c = ro->m_first;
+    c.m_rebalance_status = ChunkStatus::FROZEN;
+    for (int i = 0; i < NUMBER_OF_THREADS; i++) {
+        PendingPut ppa_i = c.ppa[i];
+        if (ppa_i.m_status == PendingStatus::BOTTOM) {
+            c.ppa[i].compare_exchange_strong(ppa_i, PendingPut(PendingStatus::FROZEN, ppa_i.m_idx));
         }
     }
 
-    // 3. pick minimal version - (we don't have any ^^)
+    // 3. pick minimal version
+    // ... we don't have scans so we don't need this part
+
 
     // 4. build:
-    chunk = ro->m_next;
-    // TODO: size can be calculated - we need to check if it is more efficient or not...
-    std::vector<KeyElement> v;
-
-    // add key val pair (if not nullptr)
-    if (keyValPair) {
-        v.push_back(KeyElement(keyValPair->first << KEY_OFFSET, nullptr, &keyValPair->second));
-    }
-
-    // add all non deleted keys in the range
+    std::set<KeyElement*> keys;
+    Chunk* C0 = &ro->m_first;
     do {
-        for (int i = 0; i < CHUNK_SIZE;
-             i++) {  // TODO: probably i < min(CHUNK_SIZE, this->m_count) is better
-            // than that
-            if (!(chunk->m_k[i].m_key & DELETED_MASK)) {
-                v.push_back(chunk->m_k[i]);  // TODO: maybe we don't want to copy them
-                // at this point
+
+        KeyElement* item = C0->m_begin_sentinel.m_next.getRef();
+        while (item != &C0->m_end_sentinel) {
+            keys.insert(item);
+        }
+
+        for (int i = 0; i < NUMBER_OF_THREADS; i++) {
+            PendingPut& pp = C0->ppa[i];
+            if (pp.m_status == PendingStatus::FROZEN) {
+                keys.insert(&C0->m_k[i]);
             }
         }
-    } while ((chunk != last) && (chunk = chunk->m_next.getRef()));
 
-    // sort the keys
-    std::sort(v.begin(), v.end());
+    } while ((C0 != last) && (C0 = C0->m_next.getRef()));
 
-    // create new chunk TODO: should use memory allocation mechanism
-    Chunk* Cn = new Chunk(v[0].m_key, this);
-    Cn->m_begin_sentinel.m_next.set(&Cn->m_k[0], false);
-    Chunk* Cf = Cn;
-
-    // arrange the keys (and values) in a list of new chunks
-    for (auto& k : v) {
+    // TODO: this is incorrect since we delete some of the keys and most probably we delete the min key as well
+    Cf = Cn = new Chunk<V>(std::min(keys), &C);
+    for (auto k: keys) { //TODO: sort the keys...
         if (Cn->m_count > (CHUNK_SIZE / 2)) {
-            // more than half full - create new one
-            Cn->m_k[Cn->m_count - 1].m_next.set(&Cn->m_end_sentinel, false);
-            //TODO should be reclaimable memory
-            Cn->m_next.set(new Chunk(k.m_key, this), false);
-            Cn = Cn->m_next.getRef();
-            Cn->m_begin_sentinel.m_next.set(&Cn->m_k[0], false);
+            Cn->m_next.set(new Chunk<V>(k->m_key, &C), false);
         }
         uint32_t count = Cn->m_count;
-        uint64_t unique_key = (k.m_key & KEY_MASK) | ((uint32_t)(count << FLAGS_BIT_OFFSET));
-        KeyElement& keyElement = Cn->m_k[count];
-        keyElement.m_key = unique_key;                     // set key without flags
-        *keyElement.m_value = *k.m_value;                  // copy the value
-        keyElement.m_next.set(&Cn->m_k[count + 1], false); // set list pointer
+        Cn->m_k[count].m_key = k->m_key;
+        *Cn->m_k[count].m_value = *k->m_value;
+        Cn->m_k[count].m_next.set(&Cn->m_k[count + 1], false);
         Cn->m_count++;
     }
+
 
     // 5. replace
 
@@ -174,26 +190,75 @@ bool PQ<V>::rebalance(Chunk<V> &C, std::pair<uint32_t, V> *keyValPair) {
     Chunk* curr_ref;
     do {
         curr_ref = last->m_next.getMarkAndRef(curr_mark);
-    } while (!last->m_next.compareAndSet(curr_ref, curr_ref, false, true));
+    } while (!curr_mark && !last->m_next.compareAndSet(curr_ref, curr_ref, false, true));
 
-    Chunk* pred = this predecessor;  // TODO: read in the paper how they get the
-    // predecessor...
 
     do {
-        if (pred->m_next.compareAndSet(this, Cf, false, false)) {
-            C.normalize();
-            return true;
+        Chunk& pred = m_index.loadPrev(C.m_min_key);
+        if (pred.m_next.compareAndSet(&C, Cf, false, false)) {
+            normalize(C);
+            return;
         }
 
-        if (pred->m_next.getRef()->m_rebalance_parent == this) {
-            C.normalize();
-            return false;
+        if (pred.m_next.getRef()->m_rebalance_parent == &C) {
+            normalize(C);
+            return;
         }
-        // TODO: support rebalance without key, val
-        pred->rebalance(nullptr);
+
+        rebalance(pred);
     } while (true);
 }
 
+template<typename V>
+Chunk &PQ<V>::locate_target_chunk(uint64_t key) {
+    Chunk<V>& C = m_index.loadChunk(key);
+    Chunk<V>* next = C.m_next.getRef();
+
+    while ((next != nullptr) && (next->m_min_key <= key)) {
+        C = *next;
+        next = C.m_next.getRef();
+    }
+
+    return C;
+}
+
+template<typename V>
+bool PQ<V>::policy(const Chunk &C) {
+    //TODO: this is an important issue for final tuning
+    return (C.m_count > (CHUNK_SIZE * 3 / 4)) || (C.m_count < (CHUNK_SIZE / 4));
+}
+
+template<typename V>
+void PQ<V>::normalize(Chunk &C) {
+    // 6. update index
+    RebalanceObject* ro = C.m_rebalance_object;
+    Chunk* c = &ro->m_first;
+    do {
+        m_index.deleteConditional(c->m_min_key, *c);
+    } while ((c != last) && (c = c->m_next.getRef()));
+
+    c = Cf;
+    do {
+        Chunk& prev = m_index.loadPrev(c->m_min_key);
+        while (!m_index.putConditional(c->m_min_key, prev, *c)) {
+            if (c->m_rebalance_status.load() == ChunkStatus::FROZEN) {
+                break;
+            }
+            prev = m_index.loadPrev(c->m_min_key);
+        }
+    } while ((c != Cn) && (c = c->m_next.getRef()));
+
+    // 7. normalize
+
+    c = Cf;
+    do {
+        ChunkStatus stat = c->m_rebalance_status;
+        if (stat == ChunkStatus::INFANT) {
+            c->m_rebalance_status.compare_exchange_strong(stat, ChunkStatus::NORMAL);
+        }
+    } while ((c != Cn) && (c = c->m_next.getRef()));
+
+}
 
 
 #endif //__PQ_H__

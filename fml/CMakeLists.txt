@@ -3,4 +3,4 @@ project(fml)
 
 set(CMAKE_CXX_STANDARD 14)
 
-add_executable(fml main.cpp pq.h chunk.h consts.h rebalance_data.h chunk.hpp AtomicMarkableReference.h)
+add_executable(fml main.cpp pq.h chunk.h consts.h rebalance_data.h chunk.hpp AtomicMarkableReference.h index.h)

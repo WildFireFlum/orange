@@ -9,13 +9,13 @@
 #include "chunk.h"
 
 template <typename T>
-struct RebalanceData {
-    RebalanceData(Chunk* first, Chunk* next);
-    Chunk* m_first;
+struct RebalanceObject {
+    RebalanceObject(Chunk& first, Chunk* next);
+    Chunk& m_first;
     std::atomic<Chunk*> m_next;
 };
 
 template<typename T>
-RebalanceData<T>::RebalanceData(Chunk *first, Chunk *next) : m_first(first), m_next(next) {}
+RebalanceObject<T>::RebalanceObject(Chunk& first, Chunk *next) : m_first(first), m_next(next) {}
 
 #endif //FML_REBALANCE_DATA_H
