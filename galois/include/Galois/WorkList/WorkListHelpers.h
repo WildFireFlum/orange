@@ -1498,6 +1498,9 @@ public:
     }
 };
 
+
+#include "KiWiPQ.h"
+
 }
 } // end namespace Galois
 
