@@ -1528,11 +1528,11 @@ public:
 
     volatile uint32_t i;
 
-    struct Element {
+    typedef struct s_element {
         K key;
         bool deleted;
-        Element* volatile next;
-    };
+        struct s_element* volatile next;
+    } Element;
 
     Element begin_sentinel;
     Element k[KIWI_CHUNK_SIZE];
@@ -1600,14 +1600,14 @@ public:
             curr = pred->next;
             while (true) {
                 succ = curr->next;
-                while (is_marked(succ)) {
+                while (succ != &end_sentinel && is_marked(succ)) {
                     if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(succ))) {
                         goto retry;
                     }
                     curr = succ;
                     succ = curr->m_next;
                 }
-                if (!compare(key, curr->key)) {
+                if (succ == &end_sentinel || !compare(key, curr->key)) {
                     return Window(pred, curr);
                 }
                 pred = curr;
@@ -1680,7 +1680,7 @@ public:
             return;
         }
 
-        std::set<Element*> set;
+        std::set<Element> set;
 
         // add all list elements
         Element* element = begin_sentinel.next;
@@ -1763,7 +1763,7 @@ protected:
     // chunks
     chunk_t begin_sentinel;
     chunk_t end_sentinel;
-    LockFreeSkipListSet<Comparer, K, chunk_t*> index;
+    // LockFreeSkipListSet<Comparer, K, chunk_t*> index;
 
     static inline bool is_marked(chunk_t* i)
     {
@@ -1797,7 +1797,8 @@ protected:
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == KiWiChunk::INFANT_CHUNK) {
             // TODO: it is clear why they think it is enough to normalize at that point, but we don't have the required information (Cn, Cf, last are all nullptr...)
-            normalize(chunk->parent);
+            // normalize(chunk->parent);
+            ATOMIC_CAS_MB(&(chunk->status), KiWiChunk::INFANT_CHUNK, KiWiChunk::NORMAL_CHUNK);
             return true;
         }
         if (chunk->i >= KIWI_CHUNK_SIZE || chunk->status == KiWiChunk::FROZEN_CHUNK || policy(chunk)) {
@@ -1864,6 +1865,10 @@ protected:
                     Cn = Cn->next;
                     Cn->parent = chunk;
                     Cn->min_key = key;
+
+                    // TODO: delete it as soon as we use index again
+                    Cn->status = KiWiChunk::NORMAL_CHUNK;
+
                 }
                 uint32_t i = Cn->i;
                 Cn->k[i].key = key;
@@ -1881,7 +1886,7 @@ protected:
             chunk_t* pred = load_prev(chunk);
             if (ATOMIC_CAS_MB(&(pred->next), unset_mark(c), unset_mark(Cf))){
                 // success - normalize chunk and free old chunks
-                normalize(chunk);
+                // normalize(chunk);
 
                 chunk* curr = ro->first;
                 chunk* next;
@@ -1902,7 +1907,7 @@ protected:
                     delete_chunk(curr);
                 } while ((curr != Cn) && (curr = next));
 
-                normalize(chunk);
+                // normalize(chunk);
                 return;
             }
 
@@ -1915,12 +1920,30 @@ protected:
     }
 
     chunk_t* locate_target_chunk(const K& key) {
-        chunk_t* c = index.get(key);
+        chunk_t* c = begin_sentinel.next; //index.get(key);
         chunk_t* next = c->next;
+
+        if (next == & end_sentinel) {
+            // the chunk list is empty, we need to create one
+            chunk_t* chunk = new_chunk();
+            chunk->next = &end_sentinel;
+            if (!ATOMIC_CAS_MB(&(begin_sentinel.next), unset_mark(&end_sentinel), unset_mark(chunk))) {
+                // we add failed - delete chunk.
+                delete_chunk(chunk);
+            }
+            return locate_target_chunk(key);
+        }
+
         while (next != &end_sentinel && !compare(next->min_key, key)) {
             c = next;
             next = c->next;
         }
+
+        if (c == &begin_sentinel) {
+            // we never add any key to the sentinels
+            return begin_sentinel.next;
+        }
+
         return c;
     }
 
@@ -1941,10 +1964,7 @@ protected:
     }
 
     void normalize(chunk_t* chunk) {
-        rebalance_object_t* ro = chunk->ro;
-        //chunk_t* c =
         //TODO
-
     }
 
     bool policy(chunk_t* chunk) {
