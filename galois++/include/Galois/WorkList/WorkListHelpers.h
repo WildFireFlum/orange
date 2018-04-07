@@ -1510,7 +1510,11 @@ public:
     chunk_t* first;
     chunk_t* volatile next;
 
-    KiWiRebalancedObject(chunk_t* f, chunk_t* n) : first(c), next(n) {}
+    void init(chunk_t* f, chunk_t* n) {
+        first = f;
+        next = n;
+    }
+
 };
 
 #define KIWI_CHUNK_SIZE 1024
@@ -1780,18 +1784,30 @@ protected:
         return ((uintptr_t)i | (uintptr_t)0x01);
     }
 
-    inline chunk_t *new_chunk() {
+    inline chunk_t* new_chunk() {
         int e = term.getEpoch() % 3;
-        // TODO: check what the hell is the second argument of allocate and deallocate
-        chunk_t *chunk = reinterpret_cast<chunk_t *>(heap[e].allocate(sizeof(chunk_t) + sizeof(uint32_t) * Galois::Runtime::activeThreads, 0));
+        // Second argument is an index of a freelist to use to reclaim
+        chunk_t* chunk = reinterpret_cast<chunk_t *>(heap[e].allocate(sizeof(chunk_t) + sizeof(uint32_t) * Galois::Runtime::activeThreads, 0));
         chunk->init();
         return node;
     }
 
     inline void delete_chunk(chunk_t* chunk) {
         int e = (term.getEpoch() + 2) % 3;
-        // TODO: check what the hell is the second argument of allocate and deallocate
         heap[e].deallocate(chunk, 0);
+    }
+
+    inline chunk_t* new_ro() {
+        int e = term.getEpoch() % 3;
+        // Manage free list of ros separately
+        rebalance_object_t *ro = reinterpret_cast<rebalance_object_t*>(heap[e].allocate(sizeof(rebalance_object_t), 1));
+        ro->init();
+        return ro;
+    }
+
+    inline void delete_ro(rebalance_object_t* ro) {
+        int e = (term.getEpoch() + 2) % 3;
+        heap[e].deallocate(ro, 0);
     }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
@@ -1812,9 +1828,9 @@ protected:
         // 1. engage
 
         // TODO: replace by mmm
-        rebalance_object_t* tmp = new rebalance_object_t(chunk, chunk->next);
+        rebalance_object_t* tmp = new_ro(chunk, chunk->next);
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
-            free(tmp);
+            delete_ro(tmp);
         }
         rebalance_object_t* ro = chunk->ro;
         chunk_t* last = chunk;
