@@ -12,25 +12,23 @@
 enum class ChunkStatus { INFANT, NORMAL, FROZEN };
 
 
-template <typename V>
+template <typename K>
 struct KeyElement {
-    uint64_t m_key;
+    K* m_key;
     AtomicMarkableReference<KeyElement> m_next;
-    V* m_value;
 
     KeyElement();
 
-    KeyElement(uint64_t key, KeyElement* next, V* value)
-        : m_key(key), m_next(next, false), m_value(value) {}
+    KeyElement(K* key, KeyElement* next);
 };
 
-template <typename V>
-KeyElement<V>::KeyElement()
-        : m_key(0), m_next(nullptr, false), m_value(nullptr) {}
+template <typename K>
+KeyElement<K>::KeyElement()
+        : m_key(nullptr), m_next(nullptr, false) {}
 
-template <typename V>
-KeyElement<V>::KeyElement(uint64_t key, KeyElement* next, V* value)
-        : m_key(key), m_next(next, false), m_value(value) {}
+template <typename K>
+KeyElement<K>::KeyElement(K* key, KeyElement* next)
+        : m_key(key), m_next(next, false) {}
 
 
 
@@ -49,69 +47,72 @@ struct PendingPut {
 };
 
 
-template <typename V>
+template <typename K>
 struct Chunk {
-    Chunk(uint64_t min_key, Chunk<V>* rebalance_parent);
+    Chunk(const K& min_key, Chunk<K>* rebalance_parent);
 
 
-    std::pair<KeyElement*, KeyElement*> findInList(uint64_t key);
+    std::pair<KeyElement*, KeyElement*> findInList(const K& key);
     bool addToList(KeyElement& item);
     bool removeFromList(KeyElement& item);
 
-
     // main list info
-    uint64_t m_min_key;                       // the minimal key in the chunk
-    AtomicMarkableReference<Chunk> m_next;    // next chunk
+    K* m_min_key;                           // the minimal key in the chunk
+    AtomicMarkableReference<Chunk> m_next;  // next chunk
 
     // inner list info
-    KeyElement m_begin_sentinel;  // sorted list begin sentinel (-infinity)
-    KeyElement m_k[CHUNK_SIZE];   // keys sorted list
-    KeyElement m_end_sentinel;    // sorted list begin sentinel (infinity)
+    KeyElement<K> m_begin_sentinel;  // sorted list begin sentinel (-infinity)
+    KeyElement<K> m_k[CHUNK_SIZE];   // keys sorted list
+    KeyElement<K> m_end_sentinel;    // sorted list begin sentinel (infinity)
 
     // inner memory info
     std::atomic<uint32_t> m_count;
-    V m_v[CHUNK_SIZE];  // values container
 
     // rebalance info
     std::atomic<ChunkStatus> m_rebalance_status;
-    Chunk* m_rebalance_parent;
-    std::atomic<RebalanceObject*> m_rebalance_object;
+    Chunk<K>* m_rebalance_parent;
+    std::atomic<RebalanceObject*> m_rebalance_object{};
 
     std::atomic<PendingPut> ppa[NUMBER_OF_THREADS];
 };
 
 
 
-template <typename V>
-Chunk<V>::Chunk(uint64_t min_key, Chunk<V>* rebalance_parent)
-        : m_min_key(min_key),
+template <typename K>
+struct RebalanceObject {
+    RebalanceObject(Chunk<K>& first, Chunk* next);
+    Chunk<K>& m_first;
+    std::atomic<Chunk<K>*> m_next;
+};
+
+template<typename K>
+RebalanceObject<K>::RebalanceObject(Chunk<K>& first, Chunk<K> *next) : m_first(first), m_next(next) {}
+
+template <typename K>
+Chunk<K>::Chunk(K& key, Chunk<K>* rebalance_parent)
+        : m_min_key(key),
           m_next(nullptr, false),
-          KeyElement(std::numeric_limits<uint64_t>::max(), nullptr, nullptr),
-          KeyElement(std::numeric_limits<uint64_t>::min(),
-                     &m_end_sentinel,
-                     nullptr),
+          m_end_sentinel(),
+          m_begin_sentinel(nullptr, &m_end_sentinel, nullptr),
+          m_count(0),
           m_rebalance_status(ChunkStatus::INFANT),
           m_rebalance_parent(rebalance_parent),
-          m_rebalance_object(nullptr) {
-    for (uint32_t i = 0; i < CHUNK_SIZE; i++) {
-        m_k[i].m_value = &m_v[i];
-    }
-}
+          m_rebalance_object(nullptr) {}
 
 
-template <typename V>
-std::pair<KeyElement*, KeyElement*> Chunk<V>::findInList(uint64_t key) {
-    KeyElement* pred = nullptr;
-    KeyElement* curr = nullptr;
-    KeyElement* succ = nullptr;
+template <typename K>
+std::pair<KeyElement*, KeyElement*> Chunk<K>::findInList(const K& key) {
+    KeyElement<K>* pred = nullptr;
+    KeyElement<K>* curr = nullptr;
+    KeyElement<K>* succ = nullptr;
 
     retry:
     while (true) {
         pred = &m_begin_sentinel;
         curr = pred->m_next.getRef();
         while (true) {
-            succ = curr->m_next.getRef();
             bool marked = true;
+            succ = curr->m_next.getMarkAndRef(marked);
             while (marked) {
                 if (!pred->m_next.compareAndSet(curr, succ, false, false)) {
                     goto retry;
@@ -128,8 +129,8 @@ std::pair<KeyElement*, KeyElement*> Chunk<V>::findInList(uint64_t key) {
     }
 }
 
-template <typename V>
-bool Chunk<V>::removeFromList(KeyElement& item) {
+template <typename K>
+bool Chunk<K>::removeFromList(KeyElement& item) {
     auto key = item.m_key;
     while (true) {
         auto elemWithKeyWindow = findInList(key);
@@ -149,8 +150,8 @@ bool Chunk<V>::removeFromList(KeyElement& item) {
     }
 }
 
-template <typename V>
-bool Chunk<V>::addToList(KeyElement& item) {
+template <typename K>
+bool Chunk<K>::addToList(KeyElement& item) {
     auto key = item.m_key;
     while (true) {
         auto elemWithKeyWindow = findInList(key);

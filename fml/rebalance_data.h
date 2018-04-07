@@ -8,14 +8,5 @@
 
 #include "chunk.h"
 
-template <typename T>
-struct RebalanceObject {
-    RebalanceObject(Chunk& first, Chunk* next);
-    Chunk& m_first;
-    std::atomic<Chunk*> m_next;
-};
-
-template<typename T>
-RebalanceObject<T>::RebalanceObject(Chunk& first, Chunk *next) : m_first(first), m_next(next) {}
 
 #endif //FML_REBALANCE_DATA_H

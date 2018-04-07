@@ -1,27 +1,32 @@
 #include "chunk.h"
 
+template <typename K>
 struct Index {
-    void deleteConditional(uint64_t key, Chunk& chunk);
+    void deleteConditional(K& key, Chunk<K>& C);
 
-    bool putConditional(uint64_t key, Chunk& prev, Chunk& chunk);
+    bool putConditional(K& key, Chunk<K>& prev, Chunk<K>& C);
 
-    Chunk& loadPrev(uint64_t key);
+    Chunk<K>& loadPrev(K& key);
 
-    Chunk& loadChunk(uint64_t key);
+    Chunk<K>& loadChunk(K& key);
 };
 
-void Index::deleteConditional(uint64_t key, Chunk &chunk) {
+template<typename K>
+void Index<K>::deleteConditional(K &key, Chunk<K> &C) {
 
 }
 
-bool Index::putConditional(uint64_t key, Chunk &prev, Chunk &chunk) {
+template<typename K>
+bool Index<K>::putConditional(K &key, Chunk<K> &prev, Chunk<K> &C) {
     return false;
 }
 
-Chunk &Index::loadPrev(uint64_t key) {
+template<typename K>
+Chunk<K> &Index<K>::loadPrev(K &key) {
     return <#initializer#>;
 }
 
-Chunk &Index::loadChunk(uint64_t key) {
+template<typename K>
+Chunk<K> &Index<K>::loadChunk(K &key) {
     return <#initializer#>;
 }

@@ -29,6 +29,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include <set>
+#include <vector>
+
 #include <climits>
 #include "WLCompileCheck.h"
 
@@ -1499,7 +1502,549 @@ public:
 };
 
 
-#include "KiWiPQ.h"
+template<class Comparer, typename K>
+struct KiWiRebalancedObject{
+public:
+    typedef KiWiChunk<Comparer, K> chunk_t;
+
+    chunk_t* first;
+    chunk_t* volatile next;
+
+    void init(chunk_t* f, chunk_t* n) {
+        first = f;
+        next = n;
+    }
+
+};
+
+#define KIWI_CHUNK_SIZE 1024
+
+template<class Comparer, typename K>
+struct KiWiChunk{
+public:
+    typedef KiWiChunk<Comparer, K> chunk_t;
+    typedef KiWiRebalancedObject<Comparer, K> rebalance_object_t;
+    // dummy field which is used by the heap when the node is freed.
+    // (without it, freeing a node would corrupt a field, possibly affecting
+    // a concurrent traversal.)
+    void* dummy;
+
+
+    volatile uint32_t i;
+
+    typedef struct s_element {
+        K key;
+        bool deleted;
+        struct s_element* volatile next;
+    } Element;
+
+    Element begin_sentinel;
+    Element k[KIWI_CHUNK_SIZE];
+    Element end_sentinel;
+
+    volatile K min_key;
+    chunk_t* volatile next;
+
+    volatile uint32_t status;
+    chunk_t* volatile parent;
+
+    rebalance_object_t* volatile ro;
+
+    // size depends on the number of threads
+    uint32_t ppa_len;
+    uint32_t volatile ppa[0];
+
+    static inline bool is_marked(Element* i)
+    {
+        return ((uintptr_t)i & (uintptr_t)0x01) != 0;
+    }
+
+    static inline Element* unset_mark(Element* i)
+    {
+        return ((uintptr_t)i & ~(uintptr_t)0x01);
+    }
+
+    static inline Element* set_mark(Element* i)
+    {
+        return ((uintptr_t)i | (uintptr_t)0x01);
+    }
+
+    enum ChunkStatus {
+        INFANT_CHUNK = 0,
+        NORMAL_CHUNK = 1,
+        FROZEN_CHUNK = 2,
+    };
+
+    enum PPA_MASK{
+        IDLE = (1 << 29) - 1,
+        POP = 1 << 29,
+        PUSH = 1 << 30,
+        FROZEN = 1 << 31,
+    };
+
+    void init() {
+        begin_sentinel.next = &end_sentinel;
+        status = INFANT;
+        ppa_len = Galois::Runtime::activeThreads;
+        for (int i = 0; i < ppa_len; i++) {
+            ppa[i] = IDLE;
+        }
+    }
+
+    typedef std::pair<Element*,Element*> Window;
+
+    Window find_in_list(const Comparer& compare, const K& key) {
+        Element* pred = nullptr;
+        Element* curr = nullptr;
+        Element* succ = nullptr;
+
+        retry:
+        while (true) {
+            pred = &begin_sentinel;
+            curr = pred->next;
+            while (true) {
+                succ = curr->next;
+                while (succ != &end_sentinel && is_marked(succ)) {
+                    if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(succ))) {
+                        goto retry;
+                    }
+                    curr = succ;
+                    succ = curr->m_next;
+                }
+                if (succ == &end_sentinel || !compare(key, curr->key)) {
+                    return Window(pred, curr);
+                }
+                pred = curr;
+                curr = succ;
+            }
+        }
+    }
+
+    void add_to_list(const Comparer& compare, Element& element) {
+        const K& key = element.key;
+        while (true) {
+            Window window = find_in_list(compare, key);
+            Element* pred = window.first;
+            Element* curr = window.second;
+
+            element.next = curr;
+            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(&element))) {
+              return;
+            }
+        }
+    }
+
+    bool remove_from_list(Element* element) {
+      Element* succ;
+      do {
+        succ = element->next;
+      } while (!ATOMIC_CAS_MB(&(element->next), unset_mark(succ), set_mark(succ)));
+    }
+
+    void freeze() {
+        status = ChunkStatus::FROZEN_CHUNK;
+        for (uint32_t i = 0; i < ppa_len; i++) {
+            do {
+                uint32_t ppa_i = ppa[i];
+            } while(!(ppa_i & FROZEN) && !ATOMIC_CAS_MB(&ppa[i], ppa_i, ppa_i | FROZEN));
+        }
+    }
+
+    bool publish_push(uint32_t index) {
+        uint32_t thread_id = Galois::Runtime::LL::getTID();
+        uint32_t ppa_t = ppa[thread_id];
+        if (!(ppa_t & FROZEN)) {
+            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, PUSH | index);
+        }
+        return false;
+    }
+
+    bool publish_pop(uint32_t index) {
+        uint32_t thread_id = Galois::Runtime::LL::getTID();
+        uint32_t ppa_t = ppa[thread_id];
+        if (!(ppa_t & FROZEN)) {
+            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, POP | index);
+        }
+        return false;
+    }
+
+    bool unpublish_index() {
+        uint32_t thread_id = Galois::Runtime::LL::getTID();
+        uint32_t ppa_t = ppa[thread_id];
+        if (!(ppa_t & FROZEN)) {
+            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, IDLE);
+        }
+        return false;
+    }
+
+    // TODO: should be improved
+    void get_keys(std::vector<K>& v) {
+        if (status != FROZEN_CHUNK) {
+            // invalid call
+            return;
+        }
+
+        std::set<Element> set;
+
+        // add all list elements
+        Element* element = begin_sentinel.next;
+        while (element != &end_sentinel) {
+            set.insert(element);
+            element = element->next;
+        }
+
+        // add pending push
+        for (int i = 0; i < ppa_len; i++) {
+            uint32_t ppa_i = ppa[i];
+            if (ppa_i & PUSH) {
+                uint32_t index = ppa_i & IDEL;
+                if (index < KIWI_CHUNK_SIZE) {
+                    set.insert(&k[index]);
+                }
+            }
+        }
+
+        // remove pending pop
+        for (int i = 0; i < ppa_len; i++) {
+            uint32_t ppa_i = ppa[i];
+            if (ppa_i & POP) {
+                uint32_t index = ppa_i & IDEL;
+                if (index < KIWI_CHUNK_SIZE) {
+                    set.erase(&k[index]);
+                }
+            }
+        }
+
+        for (std::set<Element*>::iterator ii = set.begin(); ii != set.end(); ++ii) {
+            v.push_back(ii->key);
+        }
+    }
+
+    bool try_pop(K& key) {
+        if (status == FROZEN_CHUNK) {
+            return false;
+        }
+
+        Element* element = begin_sentinel.next;
+
+        while (element != &end_sentinel) {
+            if (!element->deleted) {
+                // the distance from the beginning of k is the index of the element
+                if (!publish_pop(element - k)) {
+                    // the chunk is being rebalanced
+                    return false;
+                }
+
+                if (ATOMIC_FETCH_AND_INC_FULL(&(element->deleted)) == 0) {
+                    // we delete it successfully - disconnect from list and return
+                    key = element->key;
+                    remove_from_list(element);
+                    unpublish_index();
+                    return true;
+                }
+            }
+            element = element->next;
+        }
+        return false;
+    }
+};
+
+
+template<class Comparer, typename K>
+class KiWiPQ{
+
+protected:
+    typedef KiWiChunk<Comparer, K> chunk_t;
+    typedef KiWiRebalancedObject<Comparer, K> rebalance_object_t;
+    
+    // memory reclamation mechanism
+    static Runtime::MM::ListNodeHeap heap[3];
+    Runtime::TerminationDetection& term;
+
+    // keys comparator
+    Comparer compare;
+
+    // chunks
+    chunk_t begin_sentinel;
+    chunk_t end_sentinel;
+    // LockFreeSkipListSet<Comparer, K, chunk_t*> index;
+
+    static inline bool is_marked(chunk_t* i)
+    {
+        return ((uintptr_t)i & (uintptr_t)0x01) != 0;
+    }
+
+    static inline chunk_t* unset_mark(chunk_t* i)
+    {
+        return ((uintptr_t)i & ~(uintptr_t)0x01);
+    }
+
+    static inline chunk_t* set_mark(chunk_t* i)
+    {
+        return ((uintptr_t)i | (uintptr_t)0x01);
+    }
+
+    inline chunk_t* new_chunk() {
+        int e = term.getEpoch() % 3;
+        // Second argument is an index of a freelist to use to reclaim
+        chunk_t* chunk = reinterpret_cast<chunk_t *>(heap[e].allocate(sizeof(chunk_t) + sizeof(uint32_t) * Galois::Runtime::activeThreads, 0));
+        chunk->init();
+        return node;
+    }
+
+    inline void delete_chunk(chunk_t* chunk) {
+        int e = (term.getEpoch() + 2) % 3;
+        heap[e].deallocate(chunk, 0);
+    }
+
+    inline rebalance_object_t* new_ro() {
+        int e = term.getEpoch() % 3;
+        // Manage free list of ros separately
+        rebalance_object_t *ro = reinterpret_cast<rebalance_object_t*>(heap[e].allocate(sizeof(rebalance_object_t), 1));
+        ro->init();
+        return ro;
+    }
+
+    inline void delete_ro(rebalance_object_t* ro) {
+        int e = (term.getEpoch() + 2) % 3;
+        heap[e].deallocate(ro, 0);
+    }
+
+    bool check_rebalance(chunk_t* chunk, const K& key) {
+        if (chunk->status == KiWiChunk::INFANT_CHUNK) {
+            // TODO: it is clear why they think it is enough to normalize at that point, but we don't have the required information (Cn, Cf, last are all nullptr...)
+            // normalize(chunk->parent);
+            ATOMIC_CAS_MB(&(chunk->status), KiWiChunk::INFANT_CHUNK, KiWiChunk::NORMAL_CHUNK);
+            return true;
+        }
+        if (chunk->i >= KIWI_CHUNK_SIZE || chunk->status == KiWiChunk::FROZEN_CHUNK || policy(chunk)) {
+            rebalance(chunk);
+            return true;
+        }
+        return false;
+    }
+
+    void rebalance(chunk_t* chunk) {
+        // 1. engage
+
+        rebalance_object_t* tmp = new_ro(chunk, chunk->next);
+        if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
+            delete_ro(tmp);
+        }
+        rebalance_object_t* ro = chunk->ro;
+        chunk_t* last = chunk;
+        while (true) {
+            chunk_t* next = ro->next;
+            if (next == nullptr) {
+                break;
+            }
+            if (policy(next)) {
+                ATOMIC_CAS_MB(next, nullptr, ro);
+
+                if (next->ro == ro) {
+                    ATOMIC_CAS_MB(ro->next, next, next->next);
+                    last = next;
+                } else {
+                    ATOMIC_CAS_MB(ro->next, next, nullptr);
+                }
+            }
+        }
+
+        // search for last concurrently engaged chunk
+        while (last->next != nullptr && last->next->ro == ro) {
+            last = last->next;
+        }
+
+        // 2. freeze
+        chunk_t* c = ro->first;
+        do {
+            c->freeze();
+        } while ((c != last) && (c = c->next));
+
+
+        // 3. pick minimal version
+        // ... we don't have scans so we don't need this part
+
+        // 4. build:
+        chunk_t* c = ro->first;
+        chunk_t* Cn = new_chunk();
+        chunk_t* Cf = Cn;
+        do {
+            std::vector<K> v(KIWI_CHUNK_SIZE);
+            c->get_keys(v);
+            std::sort(v.begin(), v.end(), compare);
+            for (K& key: v) {
+                if (Cn->i > (CHUNK_SIZE / 2)) {
+                    // Cn is more than half full - create new chunk
+                    Cn->next = new_chunk();
+                    Cn = Cn->next;
+                    Cn->parent = chunk;
+                    Cn->min_key = key;
+
+                    // TODO: delete it as soon as we use index again
+                    Cn->status = KiWiChunk::NORMAL_CHUNK;
+
+                }
+                uint32_t i = Cn->i;
+                Cn->k[i].key = key;
+                Cn->k[i].next = &(Cn->k[i + 1]);
+                Cn->i++;
+            }
+        } while ((c != last) && (c = c->next));
+
+        // 5. replace
+        do {
+            Cn->next = last->next;
+        } while (!is_marked(Cn->next) && !ATOMIC_CAS_MB(&(last->next), unset_mark(Cn->next), set_mark(Cn->next)));
+
+        do {
+            chunk_t* pred = load_prev(chunk);
+            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(c), unset_mark(Cf))){
+                // success - normalize chunk and free old chunks
+                // normalize(chunk);
+
+                chunk* curr = ro->first;
+                chunk* next;
+                do {
+                    next = curr->next;
+                    delete_chunk(curr);
+                } while ((curr != last) && (curr = next));
+
+                return;
+            }
+
+            if (pred->next->parent == chunk) {
+                // someone else succeeded - delete the chunks we just created and normalize
+                chunk* curr = Cf;
+                chunk* next;
+                do {
+                    next = curr->next;
+                    delete_chunk(curr);
+                } while ((curr != Cn) && (curr = next));
+
+                // normalize(chunk);
+                return;
+            }
+
+            // insertion failed, help predecessor and retry
+            if(pred->ro != nullptr) {
+                // TODO: ...
+                rebalance(pred);
+            }
+        } while (true);
+    }
+
+    chunk_t* locate_target_chunk(const K& key) {
+        chunk_t* c = begin_sentinel.next; //index.get(key);
+        chunk_t* next = c->next;
+
+        if (next == & end_sentinel) {
+            // the chunk list is empty, we need to create one
+            chunk_t* chunk = new_chunk();
+            chunk->next = &end_sentinel;
+            if (!ATOMIC_CAS_MB(&(begin_sentinel.next), unset_mark(&end_sentinel), unset_mark(chunk))) {
+                // we add failed - delete chunk.
+                delete_chunk(chunk);
+            }
+            return locate_target_chunk(key);
+        }
+
+        while (next != &end_sentinel && !compare(next->min_key, key)) {
+            c = next;
+            next = c->next;
+        }
+
+        if (c == &begin_sentinel) {
+            // we never add any key to the sentinels
+            return begin_sentinel.next;
+        }
+
+        return c;
+    }
+
+    chunk_t* load_prev(chunk_t* chunk) {
+        // TODO: should use index instead of traversing the list
+        chunk_t* prev = begin_sentinel.next;
+        chunk_t* curr = prev->next;
+        while (curr != &end_sentinel && curr != chunk) {
+            prev = curr;
+            curr = prev->next;
+        }
+
+        if (curr == &end_sentinel) {
+            return nullptr;
+        }
+
+        return prev;
+    }
+
+    void normalize(chunk_t* chunk) {
+        //TODO
+    }
+
+    bool policy(chunk_t* chunk) {
+        //TODO ....
+        return chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i < (KiWiChunk / 4);
+    }
+
+public:
+
+
+    KiWiPQ() : term(Runtime::getSystemTermination()) {
+        begin_sentinel.next = &end_sentinel;
+    }
+
+
+    bool push(const K& key) {
+        chunk_t* chunk = locate_target_chunk(key);
+
+        if (check_rebalance(chunk, key)) {
+            return push(key);
+        }
+
+        uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);  // allocate cell in linked list
+
+        if (i >= KIWI_CHUNK_SIZE) {
+            // no more free space - trigger rebalance
+            rebalance(chunk);
+            return push(key);
+        }
+
+        chunk->k[i].key = key;
+
+        if (!chunk->publish_push(i)) {
+            // chunk is being rebalanced
+            rebalance(chunk);
+            return push(key);
+        }
+
+        chunk->add_to_list(compare, &chunk->k[i]);
+        chunk->unpublish_index();
+        return true;
+    }
+
+    bool try_pop(K& key) {
+        chunk_t* chunk = begin_sentinel.next;
+        while (chunk != &end_sentinel) {
+            if (chunk->try_pop(key)) {
+                return true;
+            }
+
+            if (chunk->status == KiWiChunk::FROZEN) {
+                // chunk is being rebalanced
+                rebalance(chunk);
+                return try_pop(key);
+            }
+
+            chunk = chunk->next;
+        }
+        return false;
+    }
+};
+
+//initialize static members
+template<class Comparer, typename K>
+Runtime::MM::ListNodeHeap KiWiPQ<Comparer,K>::heap[3];
 
 }
 } // end namespace Galois
