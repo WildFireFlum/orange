@@ -1491,26 +1491,29 @@ class kLSMQ {
     Indexer indexer;
 
 public:
-    bool push(const K& key) {
-      pq.insert((unsigned long)indexer(key), key);
-      return true;
+    bool push(const K &key) {
+        pq.insert((unsigned long) indexer(key), key);
+        return true;
     }
 
-    bool try_pop(K& key) {
-      return pq.delete_min(key);
+    bool try_pop(K &key) {
+        return pq.delete_min(key);
     }
 };
 
 
+
+template<class Comparer, typename K>
+struct KiWiChunk<Comparer, K>;
+
 template<class Comparer, typename K>
 struct KiWiRebalancedObject{
 public:
-    typedef KiWiChunk<Comparer, K> chunk_t;
 
-    chunk_t* first;
-    chunk_t* volatile next;
+    struct KiWiChunk<Comparer, K>* first;
+    struct KiWiChunk<Comparer, K>* volatile next;
 
-    void init(chunk_t* f, chunk_t* n) {
+    void init(struct KiWiChunk<Comparer, K>* f, struct KiWiChunk<Comparer, K>* n) {
         first = f;
         next = n;
     }
@@ -1522,8 +1525,7 @@ public:
 template<class Comparer, typename K>
 struct KiWiChunk{
 public:
-    typedef KiWiChunk<Comparer, K> chunk_t;
-    typedef KiWiRebalancedObject<Comparer, K> rebalance_object_t;
+    typedef struct KiWiRebalancedObject<Comparer, K> rebalance_object_t;
     // dummy field which is used by the heap when the node is freed.
     // (without it, freeing a node would corrupt a field, possibly affecting
     // a concurrent traversal.)
@@ -1532,21 +1534,21 @@ public:
 
     volatile uint32_t i;
 
-    typedef struct s_element {
+    struct Element {
         K key;
         bool deleted;
-        struct s_element* volatile next;
-    } Element;
+        struct Element* volatile next;
+    };
 
-    Element begin_sentinel;
-    Element k[KIWI_CHUNK_SIZE];
-    Element end_sentinel;
+    struct Element begin_sentinel;
+    struct Element k[KIWI_CHUNK_SIZE];
+    struct Element end_sentinel;
 
     volatile K min_key;
-    chunk_t* volatile next;
+    struct KiWiChunk<Comparer, K>* volatile next;
 
     volatile uint32_t status;
-    chunk_t* volatile parent;
+    struct KiWiChunk<Comparer, K>* volatile parent;
 
     rebalance_object_t* volatile ro;
 
@@ -1554,19 +1556,19 @@ public:
     uint32_t ppa_len;
     uint32_t volatile ppa[0];
 
-    static inline bool is_marked(Element* i)
+    static inline bool is_marked(struct Element* i)
     {
         return ((uintptr_t)i & (uintptr_t)0x01) != 0;
     }
 
-    static inline Element* unset_mark(Element* i)
+    static inline struct Element* unset_mark(struct Element* i)
     {
-        return ((uintptr_t)i & ~(uintptr_t)0x01);
+        return (struct Element*)((uintptr_t)i & ~(uintptr_t)0x01);
     }
 
-    static inline Element* set_mark(Element* i)
+    static inline struct Element* set_mark(struct Element* i)
     {
-        return ((uintptr_t)i | (uintptr_t)0x01);
+        return (struct Element*)((uintptr_t)i | (uintptr_t)0x01);
     }
 
     enum ChunkStatus {
@@ -1584,19 +1586,19 @@ public:
 
     void init() {
         begin_sentinel.next = &end_sentinel;
-        status = INFANT;
+        status = INFANT_CHUNK;
         ppa_len = Galois::Runtime::activeThreads;
         for (int i = 0; i < ppa_len; i++) {
             ppa[i] = IDLE;
         }
     }
 
-    typedef std::pair<Element*,Element*> Window;
+    typedef std::pair<struct Element*,struct Element*> Window;
 
     Window find_in_list(const Comparer& compare, const K& key) {
-        Element* pred = nullptr;
-        Element* curr = nullptr;
-        Element* succ = nullptr;
+        struct Element* pred = nullptr;
+        struct Element* curr = nullptr;
+        struct Element* succ = nullptr;
 
         retry:
         while (true) {
@@ -1609,7 +1611,7 @@ public:
                         goto retry;
                     }
                     curr = succ;
-                    succ = curr->m_next;
+                    succ = curr->next;
                 }
                 if (succ == &end_sentinel || !compare(key, curr->key)) {
                     return Window(pred, curr);
@@ -1620,7 +1622,7 @@ public:
         }
     }
 
-    void add_to_list(const Comparer& compare, Element& element) {
+    void add_to_list(const Comparer& compare, struct Element& element) {
         const K& key = element.key;
         while (true) {
             Window window = find_in_list(compare, key);
@@ -1634,8 +1636,8 @@ public:
         }
     }
 
-    bool remove_from_list(Element* element) {
-      Element* succ;
+    bool remove_from_list(struct Element* element) {
+        struct Element* succ;
       do {
         succ = element->next;
       } while (!ATOMIC_CAS_MB(&(element->next), unset_mark(succ), set_mark(succ)));
@@ -1644,8 +1646,9 @@ public:
     void freeze() {
         status = ChunkStatus::FROZEN_CHUNK;
         for (uint32_t i = 0; i < ppa_len; i++) {
+            uint32_t ppa_i;
             do {
-                uint32_t ppa_i = ppa[i];
+                ppa_i = ppa[i];
             } while(!(ppa_i & FROZEN) && !ATOMIC_CAS_MB(&ppa[i], ppa_i, ppa_i | FROZEN));
         }
     }
@@ -1684,7 +1687,7 @@ public:
             return;
         }
 
-        std::set<Element> set;
+        std::set<struct Element*> set;
 
         // add all list elements
         Element* element = begin_sentinel.next;
@@ -1697,7 +1700,7 @@ public:
         for (int i = 0; i < ppa_len; i++) {
             uint32_t ppa_i = ppa[i];
             if (ppa_i & PUSH) {
-                uint32_t index = ppa_i & IDEL;
+                uint32_t index = ppa_i & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
                     set.insert(&k[index]);
                 }
@@ -1708,14 +1711,14 @@ public:
         for (int i = 0; i < ppa_len; i++) {
             uint32_t ppa_i = ppa[i];
             if (ppa_i & POP) {
-                uint32_t index = ppa_i & IDEL;
+                uint32_t index = ppa_i & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
                     set.erase(&k[index]);
                 }
             }
         }
 
-        for (std::set<Element*>::iterator ii = set.begin(); ii != set.end(); ++ii) {
+        for (auto& ii: set) {
             v.push_back(ii->key);
         }
     }
@@ -1730,7 +1733,7 @@ public:
         while (element != &end_sentinel) {
             if (!element->deleted) {
                 // the distance from the beginning of k is the index of the element
-                if (!publish_pop(element - k)) {
+                if (!publish_pop((uint32_t)(element - k))) {
                     // the chunk is being rebalanced
                     return false;
                 }
@@ -1754,8 +1757,8 @@ template<class Comparer, typename K>
 class KiWiPQ{
 
 protected:
-    typedef KiWiChunk<Comparer, K> chunk_t;
-    typedef KiWiRebalancedObject<Comparer, K> rebalance_object_t;
+    typedef struct KiWiChunk<Comparer, K> chunk_t;
+    typedef struct KiWiRebalancedObject<Comparer, K> rebalance_object_t;
     
     // memory reclamation mechanism
     static Runtime::MM::ListNodeHeap heap[3];
@@ -1776,12 +1779,12 @@ protected:
 
     static inline chunk_t* unset_mark(chunk_t* i)
     {
-        return ((uintptr_t)i & ~(uintptr_t)0x01);
+        return (chunk_t*)((uintptr_t)i & ~(uintptr_t)0x01);
     }
 
     static inline chunk_t* set_mark(chunk_t* i)
     {
-        return ((uintptr_t)i | (uintptr_t)0x01);
+        return (chunk_t*)((uintptr_t)i | (uintptr_t)0x01);
     }
 
     inline chunk_t* new_chunk() {
@@ -1789,7 +1792,7 @@ protected:
         // Second argument is an index of a freelist to use to reclaim
         chunk_t* chunk = reinterpret_cast<chunk_t *>(heap[e].allocate(sizeof(chunk_t) + sizeof(uint32_t) * Galois::Runtime::activeThreads, 0));
         chunk->init();
-        return node;
+        return chunk;
     }
 
     inline void delete_chunk(chunk_t* chunk) {
@@ -1797,11 +1800,11 @@ protected:
         heap[e].deallocate(chunk, 0);
     }
 
-    inline rebalance_object_t* new_ro() {
+    inline rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
         int e = term.getEpoch() % 3;
         // Manage free list of ros separately
         rebalance_object_t *ro = reinterpret_cast<rebalance_object_t*>(heap[e].allocate(sizeof(rebalance_object_t), 1));
-        ro->init();
+        ro->init(f, n);
         return ro;
     }
 
@@ -1856,10 +1859,10 @@ protected:
         }
 
         // 2. freeze
-        chunk_t* c = ro->first;
+        chunk_t* t = ro->first;
         do {
-            c->freeze();
-        } while ((c != last) && (c = c->next));
+            t->freeze();
+        } while ((t != last) && (t = t->next));
 
 
         // 3. pick minimal version
@@ -1874,7 +1877,7 @@ protected:
             c->get_keys(v);
             std::sort(v.begin(), v.end(), compare);
             for (K& key: v) {
-                if (Cn->i > (CHUNK_SIZE / 2)) {
+                if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
                     Cn->next = new_chunk();
                     Cn = Cn->next;
@@ -1903,8 +1906,8 @@ protected:
                 // success - normalize chunk and free old chunks
                 // normalize(chunk);
 
-                chunk* curr = ro->first;
-                chunk* next;
+                chunk_t* curr = ro->first;
+                chunk_t* next;
                 do {
                     next = curr->next;
                     delete_chunk(curr);
@@ -1915,8 +1918,8 @@ protected:
 
             if (pred->next->parent == chunk) {
                 // someone else succeeded - delete the chunks we just created and normalize
-                chunk* curr = Cf;
-                chunk* next;
+                chunk_t* curr = Cf;
+                chunk_t* next;
                 do {
                     next = curr->next;
                     delete_chunk(curr);
@@ -1984,7 +1987,7 @@ protected:
 
     bool policy(chunk_t* chunk) {
         //TODO ....
-        return chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i < (KiWiChunk / 4);
+        return chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i < (KIWI_CHUNK_SIZE / 4);
     }
 
 public:
@@ -2018,7 +2021,7 @@ public:
             return push(key);
         }
 
-        chunk->add_to_list(compare, &chunk->k[i]);
+        chunk->add_to_list(compare, chunk->k[i]);
         chunk->unpublish_index();
         return true;
     }
