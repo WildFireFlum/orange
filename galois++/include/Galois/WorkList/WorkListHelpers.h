@@ -1572,7 +1572,7 @@ public:
     };
 
     enum PPA_MASK{
-        IDEL = (1 << 29) - 1,
+        IDLE = (1 << 29) - 1,
         POP = 1 << 29,
         PUSH = 1 << 30,
         FROZEN = 1 << 31,
@@ -1583,7 +1583,7 @@ public:
         status = INFANT;
         ppa_len = Galois::Runtime::activeThreads;
         for (int i = 0; i < ppa_len; i++) {
-            ppa[i] = IDEL;
+            ppa[i] = IDLE;
         }
     }
 
@@ -1607,7 +1607,7 @@ public:
                     curr = succ;
                     succ = curr->m_next;
                 }
-                if (!compare(curr->key, key)) {
+                if (!compare(key, curr->key)) {
                     return Window(pred, curr);
                 }
                 pred = curr;
@@ -1616,50 +1616,25 @@ public:
         }
     }
 
-    bool add_to_list(const Comparer& compare, Element& element) {
+    void add_to_list(const Comparer& compare, Element& element) {
         const K& key = element.key;
         while (true) {
             Window window = find_in_list(compare, key);
             Element* pred = window.first;
             Element* curr = window.second;
 
-            if (!compare(curr->key, key) && !compare(key, curr->key)) {
-                // key already exists
-                return false;
-            }  else {
-                element.next = unset_mark(curr);
-                if (ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(&element))) {
-                    return true;
-                }
+            element.next = curr;
+            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(&element))) {
+              return;
             }
         }
     }
 
     bool remove_from_list(Element* element) {
-        Element* element = begin_sentinel.next;
-        while (element->next != ele)
-
-        const K& key = element.key;
-        while (true) {
-            Window window = find_in_list(compare, key);
-            Element* pred = window.first;
-            Element* curr = window.second;
-
-            // TODO: we can check if the element we find is the same one we get as input
-            // this is relevent only if the keys are not uniques
-
-            if (compare(curr->key, key) || compare(key, curr->key)) {
-                // couldn't find key
-                return false;
-            }  else {
-                Element* succ = curr->next;
-                if (!ATOMIC_CAS_MB(&(curr->next), unset_mark(succ), set_mark(succ))) {
-                    continue;
-                }
-                ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(succ));
-                return true;
-            }
-        }
+      Element* succ;
+      do {
+        succ = element->next;
+      } while (!ATOMIC_CAS_MB(&(element->next), unset_mark(succ), set_mark(succ)));
     }
 
     void freeze() {
@@ -1693,7 +1668,7 @@ public:
         uint32_t thread_id = Galois::Runtime::LL::getTID();
         uint32_t ppa_t = ppa[thread_id];
         if (!(ppa_t & FROZEN)) {
-            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, IDEL);
+            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, IDLE);
         }
         return false;
     }
@@ -1756,7 +1731,7 @@ public:
                     return false;
                 }
 
-                if (ATOMIC_FETCH_AND_INC_FULL(&(element->deleted))) {
+                if (ATOMIC_FETCH_AND_INC_FULL(&(element->deleted)) == 0) {
                     // we delete it successfully - disconnect from list and return
                     key = element->key;
                     remove_from_list(element);
@@ -1764,12 +1739,10 @@ public:
                     return true;
                 }
             }
-
             element = element->next;
         }
         return false;
     }
-
 };
 
 
@@ -1822,15 +1795,13 @@ protected:
     }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
-        if (chunk.status == 0) {
+        if (chunk->status == KiWiChunk::INFANT_CHUNK) {
             // TODO: it is clear why they think it is enough to normalize at that point, but we don't have the required information (Cn, Cf, last are all nullptr...)
             normalize(chunk->parent);
-            push(key);
             return true;
         }
-        if (chunk->i >= KIWI_CHUNK_SIZE || chunk->status == 1 || policy(chunk)) {
+        if (chunk->i >= KIWI_CHUNK_SIZE || chunk->status == KiWiChunk::FROZEN_CHUNK || policy(chunk)) {
             rebalance(chunk);
-            push(key);
             return true;
         }
         return false;
@@ -1860,12 +1831,11 @@ protected:
                 } else {
                     ATOMIC_CAS_MB(ro->next, next, nullptr);
                 }
-
             }
         }
 
         // search for last concurrently engaged chunk
-        while (last->next->ro == ro) {
+        while (last->next != nullptr && last->next->ro == ro) {
             last = last->next;
         }
 
@@ -1884,7 +1854,7 @@ protected:
         chunk_t* Cn = new_chunk();
         chunk_t* Cf = Cn;
         do {
-            std::vector<K> v;
+            std::vector<K> v(KIWI_CHUNK_SIZE);
             c->get_keys(v);
             std::sort(v.begin(), v.end(), compare);
             for (K& key: v) {
@@ -1904,8 +1874,8 @@ protected:
 
         // 5. replace
         do {
-            c = last->next;
-        } while (!is_marked(c) && !ATOMIC_CAS_MB(&(last->next), unset_mark(c), set_mark(c)));
+            Cn->next = last->next;
+        } while (!is_marked(Cn->next) && !ATOMIC_CAS_MB(&(last->next), unset_mark(Cn->next), set_mark(Cn->next)));
 
         do {
             chunk_t* pred = load_prev(chunk);
@@ -1925,7 +1895,6 @@ protected:
 
             if (pred->next->parent == chunk) {
                 // someone else succeeded - delete the chunks we just created and normalize
-
                 chunk* curr = Cf;
                 chunk* next;
                 do {
@@ -1938,7 +1907,10 @@ protected:
             }
 
             // insertion failed, help predecessor and retry
-            rebalance(pred);
+            if(pred->ro != nullptr) {
+                // TODO: ...
+                rebalance(pred);
+            }
         } while (true);
     }
 
@@ -1975,6 +1947,11 @@ protected:
 
     }
 
+    bool policy(chunk_t* chunk) {
+        //TODO ....
+        return chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i < (KiWiChunk / 4);
+    }
+
 public:
 
 
@@ -1987,7 +1964,7 @@ public:
         chunk_t* chunk = locate_target_chunk(key);
 
         if (check_rebalance(chunk, key)) {
-            return true;
+            return push(key);
         }
 
         uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);  // allocate cell in linked list
@@ -2006,11 +1983,7 @@ public:
             return push(key);
         }
 
-        if (!chunk->add_to_list(compare, &chunk->k[i])) {
-            // TODO: this should never happen...
-            return false;
-        }
-
+        chunk->add_to_list(compare, &chunk->k[i]);
         chunk->unpublish_index();
         return true;
     }
@@ -2032,7 +2005,6 @@ public:
         }
         return false;
     }
-
 };
 
 //initialize static members
