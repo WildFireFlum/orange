@@ -1797,7 +1797,7 @@ protected:
         heap[e].deallocate(chunk, 0);
     }
 
-    inline chunk_t* new_ro() {
+    inline rebalance_object_t* new_ro() {
         int e = term.getEpoch() % 3;
         // Manage free list of ros separately
         rebalance_object_t *ro = reinterpret_cast<rebalance_object_t*>(heap[e].allocate(sizeof(rebalance_object_t), 1));
@@ -1827,7 +1827,6 @@ protected:
     void rebalance(chunk_t* chunk) {
         // 1. engage
 
-        // TODO: replace by mmm
         rebalance_object_t* tmp = new_ro(chunk, chunk->next);
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
