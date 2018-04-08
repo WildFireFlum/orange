@@ -1822,20 +1822,17 @@ protected:
     // chunks
     chunk_t begin_sentinel;
     chunk_t end_sentinel;
-    // LockFreeSkipListSet<Comparer, K, chunk_t*> index;
+    LockFreeSkipListSet<Comparer, K, chunk_t*> index;
 
-    static inline bool is_marked(chunk_t* i)
-    {
+    static inline bool is_marked(chunk_t* i) {
         return ((uintptr_t)i & (uintptr_t)0x01) != 0;
     }
 
-    static inline chunk_t* unset_mark(chunk_t* i)
-    {
+    static inline chunk_t* unset_mark(chunk_t* i) {
         return (chunk_t*)((uintptr_t)i & ~(uintptr_t)0x01);
     }
 
-    static inline chunk_t* set_mark(chunk_t* i)
-    {
+    static inline chunk_t* set_mark(chunk_t* i) {
         return (chunk_t*)((uintptr_t)i | (uintptr_t)0x01);
     }
 
@@ -1881,7 +1878,6 @@ protected:
 
     void rebalance(chunk_t* chunk) {
         // 1. engage
-
         rebalance_object_t* tmp = new_ro(chunk, chunk->next);
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
@@ -1935,10 +1931,6 @@ protected:
                     Cn = Cn->next;
                     Cn->parent = chunk;
                     Cn->min_key = key;
-
-                    // TODO: delete it as soon as we use index again
-                    Cn->status = NORMAL_CHUNK;
-
                 }
                 uint32_t i = Cn->i;
                 Cn->k[i].key = key;
@@ -1954,9 +1946,10 @@ protected:
 
         do {
             chunk_t* pred = load_prev(chunk);
-            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(c), unset_mark(Cf))){
+
+            if (pred != nullptr && ATOMIC_CAS_MB(&(pred->next), unset_mark(c), unset_mark(Cf))){
                 // success - normalize chunk and free old chunks
-                // normalize(chunk);
+                normalize(chunk, Cn, Cf, last);
 
                 chunk_t* curr = ro->first;
                 chunk_t* next;
@@ -1968,7 +1961,7 @@ protected:
                 return;
             }
 
-            if (pred->next->parent == chunk) {
+            if (pred == nullptr || pred->next->parent == chunk) {
                 // someone else succeeded - delete the chunks we just created and normalize
                 chunk_t* curr = Cf;
                 chunk_t* next;
@@ -1977,7 +1970,7 @@ protected:
                     delete_chunk(curr);
                 } while ((curr != Cn) && (curr = next));
 
-                // normalize(chunk);
+                normalize(chunk, Cn, Cf, last);
                 return;
             }
 
@@ -1990,10 +1983,7 @@ protected:
     }
 
     chunk_t* locate_target_chunk(const K& key) {
-        chunk_t* c = begin_sentinel.next; //index.get(key);
-        chunk_t* next = c->next;
-
-        if (next == & end_sentinel) {
+        if (begin_sentinel.next == &end_sentinel) {
             // the chunk list is empty, we need to create one
             chunk_t* chunk = new_chunk();
             chunk->next = &end_sentinel;
@@ -2001,8 +1991,13 @@ protected:
                 // we add failed - delete chunk.
                 delete_chunk(chunk);
             }
-            return locate_target_chunk(key);
         }
+
+        chunk_t* c = index.get(key);
+        if (c == nullptr) {
+            c = &begin_sentinel;
+        }
+        chunk_t* next = c->next;
 
         while (next != &end_sentinel && !compare(next->min_key, key)) {
             c = next;
@@ -2018,8 +2013,10 @@ protected:
     }
 
     chunk_t* load_prev(chunk_t* chunk) {
-        // TODO: should use index instead of traversing the list
-        chunk_t* prev = begin_sentinel.next;
+        chunk_t* prev = index.get_pred(chunk->min_key);
+        if (prev == nullptr) {
+            prev = &begin_sentinel;
+        }
         chunk_t* curr = prev->next;
         while (curr != &end_sentinel && curr != chunk) {
             prev = curr;
@@ -2027,14 +2024,36 @@ protected:
         }
 
         if (curr == &end_sentinel) {
+            // in case we didn't find chunk in the list...
             return nullptr;
         }
 
         return prev;
     }
 
-    void normalize(chunk_t* chunk) {
-        //TODO
+    void normalize(chunk_t* chunk, chunk_t* Cn, chunk_t* Cf, chunk_t* last) {
+        // 6. update index
+        chunk_t* c = chunk->ro->first;
+        do {
+            index.remove_conditional(c->min_key, c);
+        } while (c != last && (c = c->next));
+
+        c = Cf;
+        do {
+            chunk* prev;
+            do {
+                prev = index.get_pred(c->min_key);
+                if (c->status == FROZEN_CHUNK) {
+                    break;
+                }
+            } while (!index.push_conditional(c->min_key, prev, c));
+        } while (c != Cn && (c = c->next));
+
+        // 7. normalize
+        c = Cf;
+        do {
+            ATOMIC_CAS_MB(&c->status, INFANT_CHUNK, NORMAL_CHUNK);
+        } while (c != Cn && (c = c->next));
     }
 
     bool policy(chunk_t* chunk) {
