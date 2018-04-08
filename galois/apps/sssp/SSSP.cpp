@@ -438,6 +438,9 @@ struct AsyncAlgo {
     typedef UpdateRequestHasher<UpdateRequest> Hasher;
     typedef GlobPQ<UpdateRequest, kLSMQ<UpdateRequest, UpdateRequestIndexer<UpdateRequest>, 256>> kLSM256;
     typedef GlobPQ<UpdateRequest, kLSMQ<UpdateRequest, UpdateRequestIndexer<UpdateRequest>, 4096>> kLSM4096;
+
+    typedef GlobPQ<UpdateRequest, KiWiPQ<Comparer, UpdateRequest>> KIWI;
+
     typedef GlobPQ<UpdateRequest, LockFreeSkipList<Comparer, UpdateRequest>> GPQ;
     typedef GlobPQ<UpdateRequest, LockFreeSkipList<NodeComparer, UpdateRequest>> GPQ_NC;
     typedef GlobPQ<UpdateRequest, SprayList<NodeComparer, UpdateRequest>> SL;
@@ -529,6 +532,10 @@ struct AsyncAlgo {
       Galois::for_each_local(initial, Process(this, graph), Galois::wl<MQ4_SLDOBIM>());
     else if (wl == "swarm-sldobim")
       Galois::for_each_local(initial, Process(this, graph), Galois::wl<SWARM_SLDOBIM>());
+
+    else if (wl == "kiwi")
+      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<KIWI>());
+
     else if (wl == "skiplist")
       Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<GPQ>());
     else if (wl == "skiplist-nc")
