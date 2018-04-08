@@ -1379,6 +1379,14 @@ public:
     return level;
   }
 
+    // return the value of the predecessor
+    V get_pred(const K& key) {
+        sl_node_t *succs[levelmax], *preds[levelmax];
+        fraser_search(key, preds, succs, NULL);
+        return preds[0]->val;
+    }
+
+
   V get(const K& key) {
     sl_node_t *succs[levelmax], *preds[levelmax];
 
@@ -1411,7 +1419,36 @@ public:
     return true;
   }
 
-  bool push(const K& key, const V& val)
+  bool remove_conditional(const K& key, const V* condition) {
+      sl_node_t *succs[levelmax], *preds[levelmax], *next;
+
+      fraser_search(key, preds, succs, NULL);
+      if (succs[0]->key == key) {
+
+          if (condition != nullptr && preds[0]->val != *condition) {
+              return false;
+          }
+
+          next = succs[0]->next[0];
+          if (!next || !ATOMIC_CAS_MB(&succs[0]->next[0], next, set_mark(next))) {
+              return false;
+          }
+
+          mark_node_ptrs(succs);
+
+          fraser_search(key, NULL, NULL, node);
+          sl_delete_node(node);
+          return true;
+      }
+      return false;
+  }
+
+    bool remove(const K& key) {
+        return remove_conditional(key, nullptr);
+    }
+
+
+  bool push_conditional(const K& key, const V& val, const V* condition)
   {
     sl_node_t *newn, *new_next, *pred, *succ, *succs[levelmax], *preds[levelmax];
     int i, result = 0;
@@ -1420,6 +1457,12 @@ public:
 
   retry:
     fraser_search(key, preds, succs, NULL);
+
+    if (condition != nullptr && preds[0]->val != *condition) {
+        return false;
+    }
+
+
     if (succs[0]->next[0] && succs[0]->key == key)
     {                             /* Value already in list */
       result = 0;
@@ -1472,6 +1515,10 @@ public:
     return result;
   }
 
+    bool push(const K& key, const V& val) {
+        return push_conditional(key, val, nullptr);
+    }
+
 };
 
 template<class Comparer, typename K, typename V>
@@ -1501,24 +1548,28 @@ public:
     }
 };
 
-        template<class Comparer, typename K>
-        struct KiWiChunk;
 
-        template<class Comparer, typename K>
-        struct KiWiRebalancedObject;
+// kiwi defs and decelerations
 
-        enum ChunkStatus {
-            INFANT_CHUNK = 0,
-            NORMAL_CHUNK = 1,
-            FROZEN_CHUNK = 2,
-        };
+#define KIWI_CHUNK_SIZE 1024
+template<class Comparer, typename K>
+struct KiWiChunk;
 
-        enum PPA_MASK{
-            IDLE = (1 << 29) - 1,
-            POP = 1 << 29,
-            PUSH = 1 << 30,
-            FROZEN = 1 << 31,
-        };
+template<class Comparer, typename K>
+struct KiWiRebalancedObject;
+
+enum ChunkStatus {
+    INFANT_CHUNK = 0,
+    NORMAL_CHUNK = 1,
+    FROZEN_CHUNK = 2,
+};
+
+enum PPA_MASK{
+    IDLE = (1 << 29) - 1,
+    POP = 1 << 29,
+    PUSH = 1 << 30,
+    FROZEN = 1 << 31,
+};
 
 
 template<class Comparer, typename K>
@@ -1534,8 +1585,6 @@ public:
     }
 
 };
-
-#define KIWI_CHUNK_SIZE 1024
 
 template<class Comparer, typename K>
 struct KiWiChunk{
@@ -1684,7 +1733,6 @@ public:
         return false;
     }
 
-    // TODO: should be improved
     void get_keys(std::vector<K>& v) {
         if (status != FROZEN_CHUNK) {
             // invalid call
