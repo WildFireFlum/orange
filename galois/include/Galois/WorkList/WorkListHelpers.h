@@ -1893,10 +1893,10 @@ protected:
                 ATOMIC_CAS_MB(next, nullptr, ro);
 
                 if (next->ro == ro) {
-                    ATOMIC_CAS_MB(ro->next, next, next->next);
+                    ATOMIC_CAS_MB(&(ro->next), next, next->next);
                     last = next;
                 } else {
-                    ATOMIC_CAS_MB(ro->next, next, nullptr);
+                    ATOMIC_CAS_MB(&(ro->next), next, nullptr);
                 }
             }
         }
