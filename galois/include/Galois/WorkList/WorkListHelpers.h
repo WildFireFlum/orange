@@ -1501,10 +1501,25 @@ public:
     }
 };
 
+        template<class Comparer, typename K>
+        struct KiWiChunk;
 
+        template<class Comparer, typename K>
+        struct KiWiRebalancedObject;
 
-template<class Comparer, typename K>
-struct KiWiChunk<Comparer, K>;
+        enum ChunkStatus {
+            INFANT_CHUNK = 0,
+            NORMAL_CHUNK = 1,
+            FROZEN_CHUNK = 2,
+        };
+
+        enum PPA_MASK{
+            IDLE = (1 << 29) - 1,
+            POP = 1 << 29,
+            PUSH = 1 << 30,
+            FROZEN = 1 << 31,
+        };
+
 
 template<class Comparer, typename K>
 struct KiWiRebalancedObject{
@@ -1571,18 +1586,7 @@ public:
         return (struct Element*)((uintptr_t)i | (uintptr_t)0x01);
     }
 
-    enum ChunkStatus {
-        INFANT_CHUNK = 0,
-        NORMAL_CHUNK = 1,
-        FROZEN_CHUNK = 2,
-    };
 
-    enum PPA_MASK{
-        IDLE = (1 << 29) - 1,
-        POP = 1 << 29,
-        PUSH = 1 << 30,
-        FROZEN = 1 << 31,
-    };
 
     void init() {
         begin_sentinel.next = &end_sentinel;
@@ -1636,7 +1640,7 @@ public:
         }
     }
 
-    bool remove_from_list(struct Element* element) {
+    void remove_from_list(struct Element* element) {
         struct Element* succ;
       do {
         succ = element->next;
@@ -1814,13 +1818,13 @@ protected:
     }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
-        if (chunk->status == KiWiChunk::INFANT_CHUNK) {
+        if (chunk->status == INFANT_CHUNK) {
             // TODO: it is clear why they think it is enough to normalize at that point, but we don't have the required information (Cn, Cf, last are all nullptr...)
             // normalize(chunk->parent);
-            ATOMIC_CAS_MB(&(chunk->status), KiWiChunk::INFANT_CHUNK, KiWiChunk::NORMAL_CHUNK);
+            ATOMIC_CAS_MB(&(chunk->status), INFANT_CHUNK, NORMAL_CHUNK);
             return true;
         }
-        if (chunk->i >= KIWI_CHUNK_SIZE || chunk->status == KiWiChunk::FROZEN_CHUNK || policy(chunk)) {
+        if (chunk->i >= KIWI_CHUNK_SIZE || chunk->status == FROZEN_CHUNK || policy(chunk)) {
             rebalance(chunk);
             return true;
         }
@@ -1885,7 +1889,7 @@ protected:
                     Cn->min_key = key;
 
                     // TODO: delete it as soon as we use index again
-                    Cn->status = KiWiChunk::NORMAL_CHUNK;
+                    Cn->status = NORMAL_CHUNK;
 
                 }
                 uint32_t i = Cn->i;
@@ -2033,7 +2037,7 @@ public:
                 return true;
             }
 
-            if (chunk->status == KiWiChunk::FROZEN) {
+            if (chunk->status == FROZEN) {
                 // chunk is being rebalanced
                 rebalance(chunk);
                 return try_pop(key);
