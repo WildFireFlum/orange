@@ -1559,7 +1559,7 @@ public:
     struct Element k[KIWI_CHUNK_SIZE];
     struct Element end_sentinel;
 
-    volatile K min_key;
+    K min_key;
     struct KiWiChunk<Comparer, K>* volatile next;
 
     volatile uint32_t status;
@@ -1839,20 +1839,20 @@ protected:
             delete_ro(tmp);
         }
         rebalance_object_t* ro = chunk->ro;
-        chunk_t* last = chunk;
+        volatile chunk_t* last = chunk;
         while (true) {
-            chunk_t* next = ro->next;
+            volatile chunk_t* next = ro->next;
             if (next == nullptr) {
                 break;
             }
             if (policy(next)) {
-                ATOMIC_CAS_MB(next, nullptr, ro);
+                ATOMIC_CAS_MB(&next, nullptr, ro);
 
                 if (next->ro == ro) {
-                    ATOMIC_CAS_MB(ro->next, next, next->next);
+                    ATOMIC_CAS_MB(&(ro->next), next, next->next);
                     last = next;
                 } else {
-                    ATOMIC_CAS_MB(ro->next, next, nullptr);
+                    ATOMIC_CAS_MB(&(ro->next), next, nullptr);
                 }
             }
         }
@@ -1989,7 +1989,7 @@ protected:
         //TODO
     }
 
-    bool policy(chunk_t* chunk) {
+    bool policy(volatile chunk_t* chunk) {
         //TODO ....
         return chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i < (KIWI_CHUNK_SIZE / 4);
     }

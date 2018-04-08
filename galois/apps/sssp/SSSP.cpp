@@ -41,6 +41,7 @@
 #include "SSSP.h"
 #include "GraphLabAlgo.h"
 #include "LigraAlgo.h"
+#include "../../include/Galois/WorkList/WorkListHelpers.h"
 
 namespace cll = llvm::cl;
 
@@ -439,7 +440,7 @@ struct AsyncAlgo {
     typedef GlobPQ<UpdateRequest, kLSMQ<UpdateRequest, UpdateRequestIndexer<UpdateRequest>, 256>> kLSM256;
     typedef GlobPQ<UpdateRequest, kLSMQ<UpdateRequest, UpdateRequestIndexer<UpdateRequest>, 4096>> kLSM4096;
     typedef GlobPQ<UpdateRequest, LockFreeSkipList<Comparer, UpdateRequest>> GPQ;
-    typedef GlobPQ<UpdateRequest, KiwiPQ<Comparer, UpdateRequest>> KIWIPQ;
+    typedef GlobPQ<UpdateRequest, KiWiPQ<Comparer, UpdateRequest>> KIWIPQ;
     typedef GlobPQ<UpdateRequest, LockFreeSkipList<NodeComparer, UpdateRequest>> GPQ_NC;
     typedef GlobPQ<UpdateRequest, SprayList<NodeComparer, UpdateRequest>> SL;
     typedef GlobPQ<UpdateRequest, MultiQueue<Comparer, UpdateRequest, 1>> MQ1;
@@ -516,8 +517,6 @@ struct AsyncAlgo {
       Galois::for_each_local(initial, Process(this, graph), Galois::wl<OBIM_GLOB>());
     else if (wl == "obim-glob-nochunk")
       Galois::for_each_local(initial, Process(this, graph), Galois::wl<OBIM_GLOB_NOCHUNK>());
-    else if (wl == "kiwi-pq")
-      Galois::for_each_local(initial, Process(this, graph), Galois::wl<KiWiPQ>());
     else if (wl == "obim-bag-sl")
       Galois::for_each_local(initial, Process(this, graph), Galois::wl<OBIM_BAG_SL>());
     else if (wl == "obim-bag-sl-nodecmp")
@@ -534,6 +533,8 @@ struct AsyncAlgo {
       Galois::for_each_local(initial, Process(this, graph), Galois::wl<SWARM_SLDOBIM>());
     else if (wl == "skiplist")
       Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<GPQ>());
+    else if (wl == "kiwi-pq")
+      Galois::for_each_local(initial, Process(this, graph), Galois::wl<KIWIPQ>());
     else if (wl == "skiplist-nc")
       Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<GPQ_NC>());
     else if (wl == "spraylist")
