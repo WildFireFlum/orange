@@ -1890,7 +1890,7 @@ protected:
                 break;
             }
             if (policy(next)) {
-                ATOMIC_CAS_MB(next, nullptr, ro);
+                ATOMIC_CAS_MB(&next, nullptr, ro);
 
                 if (next->ro == ro) {
                     ATOMIC_CAS_MB(&(ro->next), next, next->next);
