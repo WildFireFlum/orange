@@ -1434,10 +1434,10 @@ public:
               return false;
           }
 
-          mark_node_ptrs(succs);
+          mark_node_ptrs(succs[0]);
 
-          fraser_search(key, NULL, NULL, node);
-          sl_delete_node(node);
+          fraser_search(key, NULL, NULL, succs[0]);
+          sl_delete_node(succs[0]);
           return true;
       }
       return false;
@@ -2040,7 +2040,7 @@ protected:
 
         c = Cf;
         do {
-            chunk* prev;
+            chunk_t* prev;
             do {
                 prev = index.get_pred(c->min_key);
                 if (c->status == FROZEN_CHUNK) {
