@@ -1599,9 +1599,7 @@ public:
         }
     }
 
-    typedef std::pair<struct Element*,struct Element*> Window;
-
-    void find_in_list(const Comparer& compare, const K& key, K** out_left, K** out_right) {
+    void find(const Comparer& compare, const K& key, struct Element** out_left, struct Element** out_right) {
         struct Element *left, *left_next, *right, *right_next;
 
         retry:
@@ -1642,25 +1640,18 @@ public:
         }
     }
 
-    void add_to_list(const Comparer& compare, struct Element& element) {
+    void push(const Comparer& compare, struct Element& element) {
         const K& key = element.key;
         while (true) {
             Element* left;
             Element* right;
-            find_in_list(compare, key, &left, &right);
+            find(compare, key, &left, &right);
 
             element.next = right;
             if (ATOMIC_CAS_MB(&(left->next), unset_mark(right), unset_mark(&element))) {
               return;
             }
         }
-    }
-
-    void remove_from_list(struct Element* element) {
-        struct Element* succ;
-      do {
-        succ = element->next;
-      } while (!ATOMIC_CAS_MB(&(element->next), unset_mark(succ), set_mark(succ)));
     }
 
     void freeze() {
@@ -1743,32 +1734,45 @@ public:
         }
     }
 
+
     bool try_pop(K& key) {
         if (status == FROZEN_CHUNK) {
             return false;
         }
 
-        Element* element = begin_sentinel.next;
+        struct Element *first, *next;
+        bool result;
 
-        while (element != &end_sentinel) {
-            if (element->deleted == 0) {
-                // the distance from the beginning of k is the index of the element
-                if (!publish_pop((uint32_t)(element - k))) {
-                    // the chunk is being rebalanced
-                    return false;
-                }
+        first = &begin_sentinel;
 
-                if (ATOMIC_FETCH_AND_INC_FULL(&(element->deleted)) == 0) {
-                    // we delete it successfully - disconnect from list and return
-                    key = element->key;
-                    remove_from_list(element);
-                    unpublish_index();
-                    return true;
-                }
+        while(true) {
+            do {
+                first = unset_mark(first->next);
+                next = first->next;
+            } while(next && is_marked(next));
+
+            if (next && !ATOMIC_CAS_MB(&first->next[0], next, set_mark(next))) {
+            } else {
+                break;
             }
-            element = element->next;
         }
-        return false;
+
+        result = (first->next != nullptr);
+        if (!result) {
+            return 0;
+        }
+
+        key = (first->key);
+
+        do
+        {
+            next = first->next;
+            if (is_marked(next)) {
+                break;
+            }
+        } while (!ATOMIC_CAS_MB(&first->next, next, set_mark(next)));
+
+        return result;
     }
 };
 
@@ -2019,8 +2023,6 @@ public:
 
 
     bool push(const K& key) {
-	static int tmp = 0;
-	std::cout << "push : " << tmp++ << std::endl;
         chunk_t* chunk = locate_target_chunk(key);
 
         if (check_rebalance(chunk, key)) {
@@ -2045,7 +2047,7 @@ public:
             return push(key);
         }
 
-        chunk->add_to_list(compare, chunk->k[i]);
+        chunk->push(compare, chunk->k[i]);
         chunk->unpublish_index();
         return true;
     }
