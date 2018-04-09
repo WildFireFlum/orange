@@ -99,21 +99,22 @@ class KiwiChunk {
         return ((uintptr_t)i & (uintptr_t)0x01) != 0;
     }
 
-    static Element* unset_mark(Element* i) {
-        return reinterpret_cast<Element*>((uintptr_t)i & ~(uintptr_t)0x01);
+    static Element* unset_mark(Element* j) {
+        return reinterpret_cast<Element*>((uintptr_t)j & ~(uintptr_t)0x01);
     }
 
-    static Element* set_mark(Element* i) {
-        return reinterpret_cast<Element*>((uintptr_t)i | (uintptr_t)0x01);
+    static Element* set_mark(Element* j) {
+        return reinterpret_cast<Element*>((uintptr_t)j | (uintptr_t)0x01);
     }
 
     void init() {
         begin_sentinel.next = &end_sentinel;
         status = INFANT_CHUNK;
         ppa_len = Galois::Runtime::activeThreads;
-        for (int i = 0; i < ppa_len; i++) {
-            ppa[i] = IDLE;
+        for (int j = 0; j < ppa_len; j++) {
+            ppa[j] = IDLE;
         }
+        this->i = 0;
     }
 
     void find(const Comparer& compare,
@@ -177,12 +178,12 @@ class KiwiChunk {
 
     void freeze() {
         status = ChunkStatus::FROZEN_CHUNK;
-        for (uint32_t i = 0; i < ppa_len; i++) {
-            uint32_t ppa_i;
+        for (uint32_t j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j;
             do {
-                ppa_i = ppa[i];
-            } while (!(ppa_i & FROZEN) &&
-                     !ATOMIC_CAS_MB(&ppa[i], ppa_i, ppa_i | FROZEN));
+                ppa_j = ppa[j];
+            } while (!(ppa_j & FROZEN) &&
+                     !ATOMIC_CAS_MB(&ppa[j], ppa_j, ppa_j | FROZEN));
         }
     }
 
@@ -230,10 +231,10 @@ class KiwiChunk {
         }
 
         // add pending push
-        for (int i = 0; i < ppa_len; i++) {
-            uint32_t ppa_i = ppa[i];
+        for (int j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j = ppa[j];
             if (ppa_i & PUSH) {
-                uint32_t index = ppa_i & IDLE;
+                uint32_t index = ppa_j & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
                     set.insert(&k[index]);
                 }
@@ -241,10 +242,10 @@ class KiwiChunk {
         }
 
         // remove pending pop
-        for (int i = 0; i < ppa_len; i++) {
-            uint32_t ppa_i = ppa[i];
-            if (ppa_i & POP) {
-                uint32_t index = ppa_i & IDLE;
+        for (int j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j = ppa[j];
+            if (ppa_j & POP) {
+                uint32_t index = ppa_j & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
                     set.erase(&k[index]);
                 }
@@ -312,16 +313,16 @@ class KiWiPQ {
     chunk_t end_sentinel;
     // LockFreeSkipListSet<Comparer, K, chunk_t*> index;
 
-    static bool is_marked(chunk_t* i) {
-        return ((uintptr_t)i & (uintptr_t)0x01) != 0;
+    static bool is_marked(chunk_t* j) {
+        return ((uintptr_t)j & (uintptr_t)0x01) != 0;
     }
 
-    static chunk_t* unset_mark(chunk_t* i) {
-        return reinterpret_cast<chunk_t*>((uintptr_t)i & ~(uintptr_t)0x01);
+    static chunk_t* unset_mark(chunk_t* j) {
+        return reinterpret_cast<chunk_t*>((uintptr_t)j & ~(uintptr_t)0x01);
     }
 
-    static chunk_t* set_mark(chunk_t* i) {
-        return reinterpret_cast<chunk_t*>((uintptr_t)i | (uintptr_t)0x01);
+    static chunk_t* set_mark(chunk_t* j) {
+        return reinterpret_cast<chunk_t*>((uintptr_t)j | (uintptr_t)0x01);
     }
 
     chunk_t* new_chunk() {
@@ -419,7 +420,7 @@ class KiWiPQ {
             K arr[KIWI_CHUNK_SIZE];
             uint32_t count = c->get_keys(arr);
             std::sort(arr, arr + count, compare);
-            for (uint32_t j; j < count; j++) {
+            for (uint32_t j = 0; j < count; j++) {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
                     Cn->next = new_chunk();
