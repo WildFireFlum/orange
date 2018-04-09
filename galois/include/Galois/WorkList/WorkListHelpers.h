@@ -1608,7 +1608,7 @@ public:
     struct Element k[KIWI_CHUNK_SIZE];
     struct Element end_sentinel;
 
-    volatile K min_key;
+    K min_key;
     struct KiWiChunk<Comparer, K>* volatile next;
 
     volatile uint32_t status;
