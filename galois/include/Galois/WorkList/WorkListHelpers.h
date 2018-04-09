@@ -31,6 +31,8 @@
 
 #include <set>
 #include <vector>
+#include <iostream>
+#include <csignal>
 
 #include <climits>
 #include "WLCompileCheck.h"
@@ -1551,7 +1553,7 @@ public:
 
     struct Element {
         K key;
-        bool deleted;
+        volatile int deleted;
         struct Element* volatile next;
     };
 
@@ -1599,42 +1601,56 @@ public:
 
     typedef std::pair<struct Element*,struct Element*> Window;
 
-    Window find_in_list(const Comparer& compare, const K& key) {
-        struct Element* pred = nullptr;
-        struct Element* curr = nullptr;
-        struct Element* succ = nullptr;
+    void find_in_list(const Comparer& compare, const K& key, K** out_left, K** out_right) {
+        struct Element *left, *left_next, *right, *right_next;
 
         retry:
-        while (true) {
-            pred = &begin_sentinel;
-            curr = pred->next;
+
+        left = &begin_sentinel;
+        left_next = left->next;
+        if (is_marked(left_next))
+            goto retry;
+
+        /* Find unmarked node pair at this */
+        for (right = left_next;; right = right_next) {
+            /* Skip a sequence of marked nodes */
             while (true) {
-                succ = curr->next;
-                while (succ != &end_sentinel && is_marked(succ)) {
-                    if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(succ))) {
-                        goto retry;
-                    }
-                    curr = succ;
-                    succ = curr->next;
-                }
-                if (succ == &end_sentinel || !compare(key, curr->key)) {
-                    return Window(pred, curr);
-                }
-                pred = curr;
-                curr = succ;
+                right_next = right->next;
+                if (!is_marked(right_next))
+                    break;
+                right = unset_mark(right_next);
             }
+
+            /* Ensure left and right nodes are adjacent */
+            if (left_next != right) {
+                if (!ATOMIC_CAS_MB(&left->next, left_next, right))
+                    goto retry;
+            }
+
+            if (!right_next || !compare(key, right->key))
+                break;
+
+            left = right;
+            left_next = right_next;
+        }
+
+        if (out_left) {
+            *out_left = left;
+        }
+        if (out_right) {
+            *out_right = right;
         }
     }
 
     void add_to_list(const Comparer& compare, struct Element& element) {
         const K& key = element.key;
         while (true) {
-            Window window = find_in_list(compare, key);
-            Element* pred = window.first;
-            Element* curr = window.second;
+            Element* left;
+            Element* right;
+            find_in_list(compare, key, &left, &right);
 
-            element.next = curr;
-            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(&element))) {
+            element.next = right;
+            if (ATOMIC_CAS_MB(&(left->next), unset_mark(right), unset_mark(&element))) {
               return;
             }
         }
@@ -1735,7 +1751,7 @@ public:
         Element* element = begin_sentinel.next;
 
         while (element != &end_sentinel) {
-            if (!element->deleted) {
+            if (element->deleted == 0) {
                 // the distance from the beginning of k is the index of the element
                 if (!publish_pop((uint32_t)(element - k))) {
                     // the chunk is being rebalanced
@@ -1833,7 +1849,6 @@ protected:
 
     void rebalance(chunk_t* chunk) {
         // 1. engage
-
         rebalance_object_t* tmp = new_ro(chunk, chunk->next);
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
@@ -1854,6 +1869,8 @@ protected:
                 } else {
                     ATOMIC_CAS_MB(&(ro->next), next, nullptr);
                 }
+            } else {
+		ATOMIC_CAS_MB(&(ro->next), next, nullptr);
             }
         }
 
@@ -1942,10 +1959,9 @@ protected:
     }
 
     chunk_t* locate_target_chunk(const K& key) {
-        chunk_t* c = begin_sentinel.next; //index.get(key);
+        chunk_t* c = &begin_sentinel; //index.get(key);
         chunk_t* next = c->next;
-
-        if (next == & end_sentinel) {
+        if (next == &end_sentinel) {
             // the chunk list is empty, we need to create one
             chunk_t* chunk = new_chunk();
             chunk->next = &end_sentinel;
@@ -1963,7 +1979,7 @@ protected:
 
         if (c == &begin_sentinel) {
             // we never add any key to the sentinels
-            return begin_sentinel.next;
+	    return begin_sentinel.next;
         }
 
         return c;
@@ -1971,7 +1987,7 @@ protected:
 
     chunk_t* load_prev(chunk_t* chunk) {
         // TODO: should use index instead of traversing the list
-        chunk_t* prev = begin_sentinel.next;
+        chunk_t* prev = &begin_sentinel;
         chunk_t* curr = prev->next;
         while (curr != &end_sentinel && curr != chunk) {
             prev = curr;
@@ -1991,21 +2007,24 @@ protected:
 
     bool policy(volatile chunk_t* chunk) {
         //TODO ....
-        return chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i < (KIWI_CHUNK_SIZE / 4);
+        return false; //chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i < (KIWI_CHUNK_SIZE / 4);
     }
 
 public:
 
 
-    KiWiPQ() : term(Runtime::getSystemTermination()) {
+    KiWiPQ() : term(Runtime::getSystemTermination()), begin_sentinel(), end_sentinel() {
         begin_sentinel.next = &end_sentinel;
     }
 
 
     bool push(const K& key) {
+	static int tmp = 0;
+	std::cout << "push : " << tmp++ << std::endl;
         chunk_t* chunk = locate_target_chunk(key);
 
         if (check_rebalance(chunk, key)) {
+	    tmp--;
             return push(key);
         }
 
@@ -2022,6 +2041,7 @@ public:
         if (!chunk->publish_push(i)) {
             // chunk is being rebalanced
             rebalance(chunk);
+	    tmp--;
             return push(key);
         }
 
@@ -2031,9 +2051,11 @@ public:
     }
 
     bool try_pop(K& key) {
+	static int tmp = 0;
         chunk_t* chunk = begin_sentinel.next;
         while (chunk != &end_sentinel) {
             if (chunk->try_pop(key)) {
+		std::cout << "try pop : " << tmp++ << std::endl;
                 return true;
             }
 
