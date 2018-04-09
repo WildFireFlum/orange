@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.6)
+project(kiwi)
+
+set(CMAKE_CXX_STANDARD 11)
+add_subdirectory(lib/googletest-master)
+include_directories(lib/googletest-master/googletest/include)
+include_directories(lib/googletest-master/googlemock/include)
+remove_definitions(-D__STRICT_ANSI__)
+add_executable(kiwi main.cpp Kiwi.inl utils.h Allocator.h MockAllocator.h Tests/QueueTest.cpp)
+target_link_libraries(kiwi gtest gtest_main)
