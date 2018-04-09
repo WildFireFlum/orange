@@ -1751,7 +1751,7 @@ public:
                 next = first->next;
             } while(next && is_marked(next));
 
-            if (next && !ATOMIC_CAS_MB(&first->next[0], next, set_mark(next))) {
+            if (next && !ATOMIC_CAS_MB(&first->next, next, set_mark(next))) {
             } else {
                 break;
             }
@@ -2026,7 +2026,6 @@ public:
         chunk_t* chunk = locate_target_chunk(key);
 
         if (check_rebalance(chunk, key)) {
-	    tmp--;
             return push(key);
         }
 
@@ -2043,7 +2042,6 @@ public:
         if (!chunk->publish_push(i)) {
             // chunk is being rebalanced
             rebalance(chunk);
-	    tmp--;
             return push(key);
         }
 
