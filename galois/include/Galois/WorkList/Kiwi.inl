@@ -1,9 +1,5 @@
-//
-// Created by Ynon on 09/04/2018.
-//
-
-#ifndef GALOIS_KIWI_H
-#define GALOIS_KIWI_H
+#ifndef __GALOIS_KIWI_H__
+#define __GALOIS_KIWI_H__
 
 #define KIWI_CHUNK_SIZE 1024
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
@@ -88,14 +84,14 @@ class KiwiChunk {
     /// The status of the chunk
     volatile uint32_t status;
 
-    /// The initiator of a rebalance - TODO: check if the same as ro
+    /// The parent chunk during rebalacing (while this chunk is still INFANT)
     KiwiChunk<Comparer, K>* volatile parent;
 
-    /// The first node in a rebalance chunk list
+    /// Ponits to the rebalanced object that in win in the consensus at the begging of rebalnced
     rebalance_object_t* volatile ro;
 
-    /// An array of nodes to put in the chunk, its size depends on the number of
-    /// threads Used to synchronize rebalance with put
+    /// An array of indices to push or pop from the chunk, its size is equal to the number of
+    /// threads in the system (see new_chunk() in KiWiPQ)
     uint32_t ppa_len;
     uint32_t volatile ppa[0];
 
@@ -237,7 +233,6 @@ class KiwiChunk {
         for (int i = 0; i < ppa_len; i++) {
             uint32_t ppa_i = ppa[i];
             if (ppa_i & PUSH) {
-                // TODO: figure out what is going on in these lines
                 uint32_t index = ppa_i & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
                     set.insert(&k[index]);
@@ -496,7 +491,7 @@ class KiWiPQ {
             chunk->next = &end_sentinel;
             if (!ATOMIC_CAS_MB(&(begin_sentinel.next),
                                unset_mark(&end_sentinel), unset_mark(chunk))) {
-                // we add failed - delete chunk.
+                // add failed - delete chunk.
                 delete_chunk(chunk);
             }
             return locate_target_chunk(key);
