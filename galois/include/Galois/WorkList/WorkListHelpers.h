@@ -1692,10 +1692,10 @@ public:
     }
 
     // TODO: should be improved
-    void get_keys(std::vector<K>& v) {
+    uint32_t get_keys(K arr[KIWI_CHUNK_SIZE]) {
         if (status != FROZEN_CHUNK) {
             // invalid call
-            return;
+            return 0;
         }
 
         std::set<struct Element*> set;
@@ -1728,10 +1728,12 @@ public:
                 }
             }
         }
-
+	
+	uint32_t count = 0;
         for (auto& ii: set) {
-            v.push_back(ii->key);
+            arr[count++] = ii->key;
         }
+	return count;
     }
 
 
@@ -1852,7 +1854,8 @@ protected:
     }
 
     void rebalance(chunk_t* chunk) {
-        // 1. engage
+	
+	// 1. engage
         rebalance_object_t* tmp = new_ro(chunk, chunk->next);
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
@@ -1877,7 +1880,7 @@ protected:
 		ATOMIC_CAS_MB(&(ro->next), next, nullptr);
             }
         }
-
+	//std::raise(SIGINT);
         // search for last concurrently engaged chunk
         while (last->next != nullptr && last->next->ro == ro) {
             last = last->next;
@@ -1897,24 +1900,25 @@ protected:
         chunk_t* c = ro->first;
         chunk_t* Cn = new_chunk();
         chunk_t* Cf = Cn;
+	
         do {
-            std::vector<K> v(KIWI_CHUNK_SIZE);
-            c->get_keys(v);
-            std::sort(v.begin(), v.end(), compare);
-            for (K& key: v) {
+            K arr[KIWI_CHUNK_SIZE];
+            uint32_t count = c->get_keys(arr);
+            std::sort(arr, arr + count, compare);
+            for (uint32_t j; j < count; j++) {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
                     Cn->next = new_chunk();
                     Cn = Cn->next;
                     Cn->parent = chunk;
-                    Cn->min_key = key;
+                    Cn->min_key = arr[j];
 
                     // TODO: delete it as soon as we use index again
                     Cn->status = NORMAL_CHUNK;
 
                 }
                 uint32_t i = Cn->i;
-                Cn->k[i].key = key;
+                Cn->k[i].key = arr[j];
                 Cn->k[i].next = &(Cn->k[i + 1]);
                 Cn->i++;
             }
@@ -2051,11 +2055,9 @@ public:
     }
 
     bool try_pop(K& key) {
-	static int tmp = 0;
         chunk_t* chunk = begin_sentinel.next;
         while (chunk != &end_sentinel) {
             if (chunk->try_pop(key)) {
-		std::cout << "try pop : " << tmp++ << std::endl;
                 return true;
             }
 
