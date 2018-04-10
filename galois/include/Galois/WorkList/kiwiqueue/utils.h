@@ -16,11 +16,28 @@ unsigned int getNumOfThreads() {
 #endif
 }
 
+#define FAKETID 0xdeaddaed
+
+static unsigned nextID = 0;
+
+struct AtomicNextId {
+    unsigned next() {
+        return __sync_fetch_and_add(&nextID, 1);
+    }
+};
+typedef AtomicNextId NextId;
+
+static NextId next;
+__thread unsigned TID = FAKETID;
+
 unsigned int getThreadId() {
 #ifdef GALOIS
     return Galois::Runtime::LL::getTID();
 #else
-    return 0;
+    if (TID == FAKETID) {
+        TID = next.next();
+    }
+    return TID;
 #endif
 }
 
