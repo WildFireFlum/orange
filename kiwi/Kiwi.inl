@@ -153,7 +153,13 @@ class KiwiChunk {
                     curr = succ;
                     succ = curr->next;
                 }
-                if (succ == &end_sentinel || !compare(curr->key, key)) {
+                if (succ == &end_sentinel) {
+                    out_prev = curr;
+                    out_next = &end_sentinel;
+                    return;
+                }
+
+                if (!compare(curr->key, key)) {
                     out_prev = pred;
                     out_next = curr;
                     return;
@@ -164,16 +170,16 @@ class KiwiChunk {
         }
     }
 
-    void push(const Comparer& compare, Element& element) {
-        const K& key = element.key;
+    void push(const Comparer &compare, Element &element_to_insert) {
+        const K &key = element_to_insert.key;
         while (true) {
             Element *prev;
             Element *next;
             find(compare, key, prev, next);
 
-            element.next = next;
+            element_to_insert.next = next;
             if (ATOMIC_CAS_MB(&(prev->next), unset_mark(next),
-                              unset_mark(&element))) {
+                              unset_mark(&element_to_insert))) {
                 return;
             }
         }
