@@ -114,7 +114,8 @@ class KiwiChunk {
     }
 
     void init() {
-        begin_sentinel.next = &end_sentinel;
+        begin_sentinel.next = unset_mark(&end_sentinel);
+        end_sentinel.next = nullptr;
         status = INFANT_CHUNK;
         ppa_len = getNumOfThreads();
         i = 0;
@@ -136,18 +137,26 @@ class KiwiChunk {
         while (true) {
             pred = &begin_sentinel;
             curr = unset_mark(pred->next);
+
+            if (curr == &end_sentinel) {
+                out_prev = pred;
+                out_next = curr;
+                return;
+            }
+
             while (true) {
                 succ = unset_mark(curr->next);
                 while (is_marked(curr->next)) {
-                    if (!ATOMIC_CAS_MB(pred->next, unset_mark(curr), unset_mark(succ))) {
+                    if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(succ))) {
                         goto retry;
                     }
                     curr = succ;
                     succ = curr->next;
                 }
-                if (!compare(curr->key, key)) {
+                if (succ == &end_sentinel || !compare(curr->key, key)) {
                     out_prev = pred;
                     out_next = curr;
+                    return;
                 }
                 pred = curr;
                 curr = succ;
@@ -529,8 +538,11 @@ class KiWiPQ {
         begin_sentinel.next = &end_sentinel;
     }
 
-    KiWiPQ(Allocator_t& alloc) : allocator(alloc), begin_sentinel(), end_sentinel() {
+    KiWiPQ(Allocator_t &alloc, const K &begin_key, const K &end_key)
+            : allocator(alloc), begin_sentinel(), end_sentinel() {
         begin_sentinel.next = &end_sentinel;
+        begin_sentinel.min_key = begin_key;
+        end_sentinel.min_key = end_key;
     }
 
     bool push(const K& key) {
