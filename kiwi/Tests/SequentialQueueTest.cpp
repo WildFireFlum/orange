@@ -92,7 +92,7 @@ TEST_F(SequentialQueueTest, TestMultiPushPopAscendingOneChunk) {
     }
 }
 
-TEST_F(SequentialQueueTest, TestMultiPushPopDecendingMultipleChunks) {
+TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
     const int FIRST_POP = 10;
     const int LAST_POP = (KIWI_CHUNK_SIZE * 5) + 10;
     auto& pq = getQueue();
