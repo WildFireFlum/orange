@@ -154,20 +154,14 @@ class KiwiChunk {
             }
 
             while (true) {
-                succ = unset_mark(curr->next);
+                succ = curr->next;
                 while (is_marked(curr->next)) {
                     if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr),
                                        unset_mark(succ))) {
                         goto retry;
                     }
-                    curr = succ;
-                    succ = unset_mark(curr->next);
-                }
-
-                if (succ == &end_sentinel) {
-                    out_prev = curr;
-                    out_next = &end_sentinel;
-                    return;
+                    curr = unset_mark(succ);
+                    succ = curr->next;
                 }
 
                 if (!compare(curr->key, key)) {
@@ -176,8 +170,14 @@ class KiwiChunk {
                     return;
                 }
 
+                if (unset_mark(succ) == &end_sentinel) {
+                    out_prev = curr;
+                    out_next = &end_sentinel;
+                    return;
+                }
+
                 pred = curr;
-                curr = succ;
+                curr = unset_mark(succ);
             }
         }
     }
