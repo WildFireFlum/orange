@@ -1,39 +1,16 @@
 //
 // Created by Ynon on 26/03/2018.
 //
+#include "QueueTest.h"
 
-#include <gtest/gtest.h>
-#include "../kiwiqueue/Kiwi.inl"
-#include "../kiwiqueue/MockAllocator.h"
-
-template <typename T>
-class MockComparer {
+class SequentialQueueTest : public QueueTest {
    public:
-    bool operator()(const T& t1, const T& t2) const { return t1 < t2; }
-};
-
-using kiwipq_t = KiWiPQ<MockComparer<int>, int, MockAllocator>;
-
-class SequentialQueueTest : public testing::Test {
-   public:
-    SequentialQueueTest() : m_allocator(nullptr), m_pq(nullptr) {}
+    SequentialQueueTest() = default;
 
     virtual void SetUp() {
         m_allocator = new MockAllocator();
         m_pq = new kiwipq_t(m_allocator, 0, 13371337, 1);
     }
-
-    virtual void TearDown() {
-        delete m_allocator;
-        delete m_pq;
-    }
-
-   protected:
-    kiwipq_t& getQueue() { return *m_pq; }
-
-   private:
-    MockAllocator* m_allocator;
-    kiwipq_t* m_pq;
 };
 
 TEST_F(SequentialQueueTest, TestOnePushOnePop) {
