@@ -117,64 +117,53 @@ class KiwiChunk {
         begin_sentinel.next = &end_sentinel;
         status = INFANT_CHUNK;
         ppa_len = getNumOfThreads();
+        i = 0;
         for (int i = 0; i < ppa_len; i++) {
             ppa[i] = IDLE;
         }
     }
 
+    /// Based on lock free list from "The art of multiprocessor programming"
     void find(const Comparer& compare,
               const K& key,
-              Element** out_left,
-              Element** out_right) {
-        Element *left, *left_next, *right, *right_next;
+              Element *&out_prev,
+              Element *&out_next) {
+        Element *pred = nullptr;
+        Element *curr = nullptr;
+        Element *succ = nullptr;
 
-    retry:
-
-        left = &begin_sentinel;
-        left_next = left->next;
-        if (is_marked(left_next))
-            goto retry;
-
-        /* Find unmarked node pair at this */
-        for (right = left_next;; right = right_next) {
-            /* Skip a sequence of marked nodes */
+        retry:
+        while (true) {
+            pred = &begin_sentinel;
+            curr = unset_mark(pred->next);
             while (true) {
-                right_next = right->next;
-                if (!is_marked(right_next))
-                    break;
-                right = unset_mark(right_next);
+                succ = unset_mark(curr->next);
+                while (is_marked(curr->next)) {
+                    if (!ATOMIC_CAS_MB(pred->next, unset_mark(curr), unset_mark(succ))) {
+                        goto retry;
+                    }
+                    curr = succ;
+                    succ = curr->next;
+                }
+                if (!compare(curr->key, key)) {
+                    out_prev = pred;
+                    out_next = curr;
+                }
+                pred = curr;
+                curr = succ;
             }
-
-            /* Ensure left and right nodes are adjacent */
-            if (left_next != right) {
-                if (!ATOMIC_CAS_MB(&left->next, left_next, right))
-                    goto retry;
-            }
-
-            if (!right_next || !compare(key, right->key))
-                break;
-
-            left = right;
-            left_next = right_next;
-        }
-
-        if (out_left) {
-            *out_left = left;
-        }
-        if (out_right) {
-            *out_right = right;
         }
     }
 
     void push(const Comparer& compare, Element& element) {
         const K& key = element.key;
         while (true) {
-            Element* left;
-            Element* right;
-            find(compare, key, &left, &right);
+            Element *prev;
+            Element *next;
+            find(compare, key, prev, next);
 
-            element.next = right;
-            if (ATOMIC_CAS_MB(&(left->next), unset_mark(right),
+            element.next = next;
+            if (ATOMIC_CAS_MB(&(prev->next), unset_mark(next),
                               unset_mark(&element))) {
                 return;
             }
