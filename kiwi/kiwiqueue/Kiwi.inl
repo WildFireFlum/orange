@@ -1,13 +1,15 @@
 #ifndef __GALOIS_KIWI_H__
 #define __GALOIS_KIWI_H__
 
+#include <algorithm>
+#include <set>
+
+#include "utils.h"
+#include "Allocator.h"
+
 #define KIWI_CHUNK_SIZE 1024
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
 #define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
-
-// TODO: remove
-using uint32_t = unsigned int;
-using uintptr_t = unsigned long long;
 
 template <class Comparer, typename K>
 class KiwiChunk;
@@ -88,16 +90,17 @@ class KiwiChunk {
     /// The parent chunk during rebalacing (while this chunk is still INFANT)
     KiwiChunk<Comparer, K>* volatile parent;
 
-    /// Ponits to the rebalanced object that in win in the consensus at the begging of rebalnced
+    /// Ponits to the rebalanced object that in win in the consensus at the
+    /// begging of rebalnced
     rebalance_object_t* volatile ro;
 
-    /// An array of indices to push or pop from the chunk, its size is equal to the number of
-    /// threads in the system (see new_chunk() in KiWiPQ)
+    /// An array of indices to push or pop from the chunk, its size is equal to
+    /// the number of threads in the system (see new_chunk() in KiWiPQ)
     uint32_t ppa_len;
     uint32_t volatile ppa[0];
 
-    static bool is_marked(Element* i) {
-        return ((uintptr_t)i & (uintptr_t)0x01) != 0;
+    static bool is_marked(Element* j) {
+        return ((uintptr_t)j & (uintptr_t)0x01) != 0;
     }
 
     static Element* unset_mark(Element* j) {
@@ -109,60 +112,73 @@ class KiwiChunk {
     }
 
     void init() {
-        begin_sentinel.next = &end_sentinel;
+        // Used for debugging
+        element_t* const UNINITIALIZED = reinterpret_cast<element_t* const>(0xdeadf00d);
+        begin_sentinel.next = unset_mark(&end_sentinel);
+        end_sentinel.next = nullptr;
         status = INFANT_CHUNK;
-        ppa_len = Galois::Runtime::activeThreads;
+        ppa_len = getNumOfThreads();
+        this->i = 0;
+
+        // initialize ppa entries
         for (int j = 0; j < ppa_len; j++) {
             ppa[j] = IDLE;
         }
-        for (int j = 0; j < KIWI_CHUNK_SIZE - 1; j++) {
-            k[j].next = &k[j + 1];
+
+        // initialize next pointers of all elements
+        for (int j = 0; j < KIWI_CHUNK_SIZE; j++) {
+            k[j].next = UNINITIALIZED;
         }
-        k[KIWI_CHUNK_SIZE - 1].next = &end_sentinel;
-        this->i = 0;
+        //TODO: change it back to the next element in the array, and set the last one to end_sentinel
+
     }
 
+    /// Based on lock free list from "The art of multiprocessor programming"
     void find(const Comparer& compare,
               const K& key,
-              Element** out_left,
-              Element** out_right) {
-        Element *left, *left_next, *right, *right_next;
+              Element*& out_prev,
+              Element*& out_next) {
+        Element* pred = nullptr;
+        Element* curr = nullptr;
+        Element* succ = nullptr;
 
     retry:
+        while (true) {
+            pred = &begin_sentinel;
+            curr = unset_mark(pred->next);
 
-        left = &begin_sentinel;
-        left_next = left->next;
-        if (is_marked(left_next))
-            goto retry;
+            if (curr == &end_sentinel) {
+                out_prev = pred;
+                out_next = curr;
+                return;
+            }
 
-        /* Find unmarked node pair at this */
-        for (right = left_next;; right = right_next) {
-            /* Skip a sequence of marked nodes */
             while (true) {
-                right_next = right->next;
-                if (!is_marked(right_next))
-                    break;
-                right = unset_mark(right_next);
+                succ = unset_mark(curr->next);
+                while (is_marked(curr->next)) {
+                    if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr),
+                                       unset_mark(succ))) {
+                        goto retry;
+                    }
+                    curr = succ;
+                    succ = unset_mark(curr->next);
+                }
+
+                if (succ == &end_sentinel) {
+                    out_prev = curr;
+                    out_next = &end_sentinel;
+                    return;
+                }
+
+                if (!compare(curr->key, key)) {
+                    out_prev = pred;
+                    out_next = curr;
+                    return;
+                }
+
+                pred = curr;
+                curr = succ;
             }
-
-            /* Ensure left and right nodes are adjacent */
-            if (left_next != right) {
-                if (!ATOMIC_CAS_MB(&left->next, left_next, right))
-                    goto retry;
-            }
-
-            if (!right_next || !compare(key, right->key))
-                break;
-
-            left = right;
-            left_next = right_next;
-        }
-
-        if (out_left) {
-            *out_left = left;
-        }
-        if (out_right) {
-            *out_right = right;
         }
     }
 
@@ -171,7 +187,7 @@ class KiwiChunk {
         while (true) {
             Element* left;
             Element* right;
-            find(compare, key, &left, &right);
+            find(compare, key, left, right);
 
             element.next = right;
             if (ATOMIC_CAS_MB(&(left->next), unset_mark(right),
@@ -193,7 +209,7 @@ class KiwiChunk {
     }
 
     bool publish_push(uint32_t index) {
-        uint32_t thread_id = Galois::Runtime::LL::getTID();
+        uint32_t thread_id = getThreadId();
         uint32_t ppa_t = ppa[thread_id];
         if (!(ppa_t & FROZEN)) {
             return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, PUSH | index);
@@ -202,7 +218,7 @@ class KiwiChunk {
     }
 
     bool publish_pop(uint32_t index) {
-        uint32_t thread_id = Galois::Runtime::LL::getTID();
+        uint32_t thread_id = getThreadId();
         uint32_t ppa_t = ppa[thread_id];
         if (!(ppa_t & FROZEN)) {
             return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, POP | index);
@@ -211,7 +227,7 @@ class KiwiChunk {
     }
 
     bool unpublish_index() {
-        uint32_t thread_id = Galois::Runtime::LL::getTID();
+        uint32_t thread_id = getThreadId();
         uint32_t ppa_t = ppa[thread_id];
         if (!(ppa_t & FROZEN)) {
             return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, IDLE);
@@ -231,8 +247,9 @@ class KiwiChunk {
         // add all list elements
         Element* element = begin_sentinel.next;
         while (element != &end_sentinel) {
-            if (element)
-            set.insert(element);
+            if (!element->deleted) {
+                set.insert(element);
+            }
             element = unset_mark(element->next);
         }
 
@@ -276,31 +293,31 @@ class KiwiChunk {
             // 1. find not deleted element
             do {
                 currElem = unset_mark(currElem->next);
-            } while (currElem->next && (currElem->deleted));
+            } while ((currElem != &end_sentinel) && (currElem->deleted));
 
-            if (!currElem->next) {
+            if (currElem == &end_sentinel) {
                 // end of the list
                 return false;
             }
 
             // 2. publish pop
-            if (!publish_pop(currElem - k)) {
+            if (!publish_pop((uint32_t)(currElem - k))) {
                 // chunk is being rebalanced
                 return false;
             }
 
             // 3. try to mark element as deleted
-            if (ATOMIC_FETCH_AND_INC_FULL(&(currElem->deleted)) != 0) {
+            if (!ATOMIC_CAS_MB(&(currElem->deleted), 0, 1)) {
                 // someone else deleted the element before us, continue
                 continue;
             }
 
             // 4. deleted - pop from elements list
-            if (!currElem->next) {
+            if (currElem == &end_sentinel) {
                 return false;
             }
 
-            key = (currElem->key);
+            key = currElem->key;
             Element* nextElem;
             do {
                 nextElem = currElem->next;
@@ -314,18 +331,20 @@ class KiwiChunk {
     }
 };
 
-template <class Comparer, typename K>
+#ifdef GALOIS
+#include "GaloisAllocator.h"
+#endif
+
+template <typename Comparer, typename K, typename Allocator_t>
 class KiWiPQ {
     using chunk_t = KiwiChunk<Comparer, K>;
     using rebalance_object_t = KiWiRebalancedObject<Comparer, K>;
 
    protected:
-    // memory reclamation mechanism
-    static Runtime::MM::ListNodeHeap heap[3];
-    Runtime::TerminationDetection& term;
-
     // keys comparator
     Comparer compare;
+
+    Allocator_t* allocator;
 
     // chunks
     chunk_t begin_sentinel;
@@ -345,33 +364,23 @@ class KiWiPQ {
     }
 
     chunk_t* new_chunk() {
-        int e = term.getEpoch() % 3;
         // Second argument is an index of a freelist to use to reclaim
-        chunk_t* chunk = reinterpret_cast<chunk_t*>(heap[e].allocate(
-            sizeof(chunk_t) + sizeof(uint32_t) * Galois::Runtime::activeThreads,
-            0));
+        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(
+            sizeof(chunk_t) + sizeof(uint32_t) * getNumOfThreads(), 0));
         chunk->init();
         return chunk;
     }
 
-    void delete_chunk(chunk_t* chunk) {
-        int e = (term.getEpoch() + 2) % 3;
-        heap[e].deallocate(chunk, 0);
-    }
+    void delete_chunk(chunk_t* chunk) { allocator->deallocate(chunk, 0); }
 
     rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
-        int e = term.getEpoch() % 3;
-        // Manage free list of ros separately
         rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(
-            heap[e].allocate(sizeof(rebalance_object_t), 1));
+            allocator->allocate(sizeof(rebalance_object_t), 1));
         ro->init(f, n);
         return ro;
     }
 
-    void delete_ro(rebalance_object_t* ro) {
-        int e = (term.getEpoch() + 2) % 3;
-        heap[e].deallocate(ro, 1);
-    }
+    void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1); }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
@@ -417,7 +426,8 @@ class KiWiPQ {
         }
 
         // search for last concurrently engaged chunk
-        while (unset_mark(last->next) != nullptr && unset_mark(last->next)->ro == ro) {
+        while (unset_mark(last->next) != nullptr &&
+               unset_mark(last->next)->ro == ro) {
             last = unset_mark(last->next);
         }
 
@@ -425,7 +435,7 @@ class KiWiPQ {
         chunk_t* t = ro->first;
         do {
             t->freeze();
-        } while ((t != last) && (t = t->next));
+        } while ((t != last) && (t = unset_mark(t->next)));
 
         // 3. pick minimal version
         // ... we don't have scans so we don't need this part
@@ -443,11 +453,15 @@ class KiWiPQ {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
 
-                    Cn->k[Cn->i - 1].next = &Cn->end_sentinel;  // close Cn inner list
-                    Cn->next = new_chunk();                     // create a new chunk and set Cn->next points to it
-                    Cn = Cn->next;                              // Cn points to the new chunk
-                    Cn->parent = chunk;                         // set chunk as rebalance parent of the new chunk
-                    Cn->min_key = arr[j];                       // set chunk min key - this value won't be change
+                    Cn->k[Cn->i - 1].next =
+                        &Cn->end_sentinel;   // close Cn inner list
+                    Cn->next = new_chunk();  // create a new chunk and set
+                                             // Cn->next points to it
+                    Cn = Cn->next;           // Cn points to the new chunk
+                    Cn->parent = chunk;      // set chunk as rebalance parent of the
+                                             // new chunk
+                    Cn->min_key = arr[j];    // set chunk min key - this value
+                                             // won't be change
 
                     // TODO: delete it as soon as we use index again
                     Cn->status = NORMAL_CHUNK;
@@ -457,7 +471,7 @@ class KiWiPQ {
                 Cn->k[i].next = &(Cn->k[i + 1]);
                 Cn->i++;
             }
-        } while ((c != last) && (c = c->next));
+        } while ((c != last) && (c = unset_mark(c->next)));
 
         // 5. replace
         do {
@@ -482,7 +496,7 @@ class KiWiPQ {
                 return;
             }
 
-            if (pred->next->parent == chunk) {
+            if (unset_mark(pred->next)->parent == chunk) {
                 // someone else succeeded - delete the chunks we just created
                 // and normalize
                 chunk_t* curr = Cf;
@@ -559,11 +573,18 @@ class KiWiPQ {
     }
 
    public:
-    KiWiPQ()
-        : term(Runtime::getSystemTermination()),
-          begin_sentinel(),
-          end_sentinel() {
+
+#ifdef GALOIS
+    KiWiPQ() : allocator(new GaloisAllocator()), begin_sentinel(), end_sentinel() {
         begin_sentinel.next = &end_sentinel;
+    }
+#endif
+
+    KiWiPQ(Allocator_t* alloc, const K& begin_key, const K& end_key)
+        : allocator(alloc), begin_sentinel(), end_sentinel() {
+        begin_sentinel.next = &end_sentinel;
+        begin_sentinel.min_key = begin_key;
+        end_sentinel.min_key = end_key;
     }
 
     bool push(const K& key) {
@@ -573,8 +594,8 @@ class KiWiPQ {
             return push(key);
         }
 
-        uint32_t i = ATOMIC_FETCH_AND_INC_FULL(
-            &chunk->i);  // allocate cell in linked list
+        // allocate cell in linked list
+        uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);
 
         if (i >= KIWI_CHUNK_SIZE) {
             // no more free space - trigger rebalance
@@ -596,7 +617,7 @@ class KiWiPQ {
     }
 
     bool try_pop(K& key) {
-        chunk_t* chunk = begin_sentinel.next;
+        chunk_t* chunk = unset_mark(begin_sentinel.next);
         while (chunk != &end_sentinel) {
             if (chunk->try_pop(key)) {
                 return true;
@@ -614,8 +635,4 @@ class KiWiPQ {
     }
 };
 
-// initialize static members
-template <class Comparer, typename K>
-Runtime::MM::ListNodeHeap KiWiPQ<Comparer, K>::heap[3];
-
-#endif  // GALOIS_KIWI_H
+#endif  // __GALOIS_KIWI_H__

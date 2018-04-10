@@ -15,8 +15,8 @@ public:
     void* allocate(unsigned int numOfBytes, unsigned int listIndex) {
         int e = term.getEpoch() % 3;
         // Manage free list of ros separately
-        T* allocated = reinterpret_cast<T*>(heap[e].allocate(sizeof(T), listIndex));
-        return allocated;
+        return reinterpret_cast<void*>(heap[e].allocate(numOfBytes, listIndex));
+
     }
 
     void deallocate(void* ptr, unsigned int listIndex) {
@@ -28,8 +28,6 @@ private:
     // memory reclamation mechanism
     Runtime::MM::ListNodeHeap heap[3];
     Runtime::TerminationDetection& term;
-
-
 
 };
 

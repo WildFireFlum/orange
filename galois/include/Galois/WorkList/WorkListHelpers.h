@@ -1505,7 +1505,7 @@ public:
     }
 };
 
-#include "Kiwi.inl"
+#include "kiwiqueue/KiwiGaloisInclude.h"
 
 }
 } // end namespace Galois

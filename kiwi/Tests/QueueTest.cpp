@@ -3,8 +3,8 @@
 //
 
 #include <gtest/gtest.h>
-#include "../Kiwi.inl"
-#include "../MockAllocator.h"
+#include "../kiwiqueue/Kiwi.inl"
+#include "../kiwiqueue/MockAllocator.h"
 
 template <typename T>
 class MockComparer {
@@ -25,7 +25,7 @@ public:
 
     virtual void SetUp() {
         m_allocator = new MockAllocator();
-        m_pq = new kiwipq_t(*m_allocator, 0, 13371337);
+        m_pq = new kiwipq_t(m_allocator, 0, 13371337);
     }
 
     virtual void TearDown() {

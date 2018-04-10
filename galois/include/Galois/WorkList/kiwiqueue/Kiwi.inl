@@ -3,16 +3,13 @@
 
 #include <algorithm>
 #include <set>
-#include "Allocator.h"
+
 #include "utils.h"
+#include "Allocator.h"
 
 #define KIWI_CHUNK_SIZE 1024
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
 #define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
-
-// TODO: remove
-// using uint32_t = unsigned int;
-// using uintptr_t = unsigned long long;
 
 template <class Comparer, typename K>
 class KiwiChunk;
@@ -334,10 +331,9 @@ class KiwiChunk {
     }
 };
 
-class GaloisAllocator : public Allocator {
-   public:
-    GaloisAllocator();
-};
+#ifdef GALOIS
+#include "GaloisAllocator.h"
+#endif
 
 template <typename Comparer, typename K, typename Allocator_t>
 class KiWiPQ {
@@ -348,7 +344,7 @@ class KiWiPQ {
     // keys comparator
     Comparer compare;
 
-    Allocator_t allocator;
+    Allocator_t* allocator;
 
     // chunks
     chunk_t begin_sentinel;
@@ -369,22 +365,22 @@ class KiWiPQ {
 
     chunk_t* new_chunk() {
         // Second argument is an index of a freelist to use to reclaim
-        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator.allocate(
+        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(
             sizeof(chunk_t) + sizeof(uint32_t) * getNumOfThreads(), 0));
         chunk->init();
         return chunk;
     }
 
-    void delete_chunk(chunk_t* chunk) { allocator.deallocate(chunk, 0); }
+    void delete_chunk(chunk_t* chunk) { allocator->deallocate(chunk, 0); }
 
     rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
         rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(
-            allocator.allocate(sizeof(rebalance_object_t), 1));
+            allocator->allocate(sizeof(rebalance_object_t), 1));
         ro->init(f, n);
         return ro;
     }
 
-    void delete_ro(rebalance_object_t* ro) { allocator.deallocate(ro, 1); }
+    void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1); }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
@@ -577,11 +573,14 @@ class KiWiPQ {
     }
 
    public:
-    KiWiPQ() : allocator(GaloisAllocator()), begin_sentinel(), end_sentinel() {
+
+#ifdef GALOIS
+    KiWiPQ() : allocator(new GaloisAllocator()), begin_sentinel(), end_sentinel() {
         begin_sentinel.next = &end_sentinel;
     }
+#endif
 
-    KiWiPQ(Allocator_t& alloc, const K& begin_key, const K& end_key)
+    KiWiPQ(Allocator_t* alloc, const K& begin_key, const K& end_key)
         : allocator(alloc), begin_sentinel(), end_sentinel() {
         begin_sentinel.next = &end_sentinel;
         begin_sentinel.min_key = begin_key;
