@@ -147,12 +147,6 @@ class KiwiChunk {
             pred = &begin_sentinel;
             curr = unset_mark(pred->next);
 
-            if (curr == &end_sentinel) {
-                out_prev = pred;
-                out_next = curr;
-                return;
-            }
-
             while (true) {
                 succ = curr->next;
                 while (is_marked(curr->next)) {
@@ -162,6 +156,13 @@ class KiwiChunk {
                     }
                     curr = unset_mark(succ);
                     succ = curr->next;
+                }
+
+                if (curr == &end_sentinel) {
+                    // the list is empty
+                    out_prev = pred;
+                    out_next = curr;
+                    return;
                 }
 
                 if (!compare(curr->key, key)) {
