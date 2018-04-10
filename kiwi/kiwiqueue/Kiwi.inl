@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <set>
 
-#include "utils.h"
+#include "Utils.h"
 #include "Allocator.h"
 
 #define KIWI_CHUNK_SIZE 1024
@@ -111,13 +111,13 @@ class KiwiChunk {
         return reinterpret_cast<Element*>((uintptr_t)j | (uintptr_t)0x01);
     }
 
-    void init() {
+    void init(unsigned int num_threads) {
         // Used for debugging
         element_t* const UNINITIALIZED = reinterpret_cast<element_t* const>(0xdeadf00d);
         begin_sentinel.next = unset_mark(&end_sentinel);
         end_sentinel.next = nullptr;
         status = INFANT_CHUNK;
-        ppa_len = getNumOfThreads();
+        ppa_len = num_threads;
         this->i = 0;
 
         // initialize ppa entries
@@ -346,6 +346,9 @@ class KiWiPQ {
 
     Allocator_t* allocator;
 
+    /// The number of threads
+    unsigned int num_of_threads;
+
     // chunks
     chunk_t begin_sentinel;
     chunk_t end_sentinel;
@@ -366,8 +369,8 @@ class KiWiPQ {
     chunk_t* new_chunk() {
         // Second argument is an index of a freelist to use to reclaim
         chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(
-            sizeof(chunk_t) + sizeof(uint32_t) * getNumOfThreads(), 0));
-        chunk->init();
+            sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
+        chunk->init(num_of_threads);
         return chunk;
     }
 
@@ -575,13 +578,13 @@ class KiWiPQ {
    public:
 
 #ifdef GALOIS
-    KiWiPQ() : allocator(new GaloisAllocator()), begin_sentinel(), end_sentinel() {
+    KiWiPQ() : allocator(new GaloisAllocator()), begin_sentinel(), end_sentinel(), num_of_threads(getNumOfThreads()) {
         begin_sentinel.next = &end_sentinel;
     }
 #endif
 
-    KiWiPQ(Allocator_t* alloc, const K& begin_key, const K& end_key)
-        : allocator(alloc), begin_sentinel(), end_sentinel() {
+    KiWiPQ(Allocator_t* alloc, const K& begin_key, const K& end_key, unsigned int num_threads)
+        : allocator(alloc), begin_sentinel(), end_sentinel(), num_of_threads(num_threads) {
         begin_sentinel.next = &end_sentinel;
         begin_sentinel.min_key = begin_key;
         end_sentinel.min_key = end_key;

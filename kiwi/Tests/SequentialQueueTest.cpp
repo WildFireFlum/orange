@@ -14,13 +14,13 @@ class MockComparer {
 
 using kiwipq_t = KiWiPQ<MockComparer<int>, int, MockAllocator>;
 
-class QueueTest : public testing::Test {
+class SequentialQueueTest : public testing::Test {
    public:
-    QueueTest() : m_allocator(nullptr), m_pq(nullptr) {}
+    SequentialQueueTest() : m_allocator(nullptr), m_pq(nullptr) {}
 
     virtual void SetUp() {
         m_allocator = new MockAllocator();
-        m_pq = new kiwipq_t(m_allocator, 0, 13371337);
+        m_pq = new kiwipq_t(m_allocator, 0, 13371337, 1);
     }
 
     virtual void TearDown() {
@@ -36,7 +36,7 @@ class QueueTest : public testing::Test {
     kiwipq_t* m_pq;
 };
 
-TEST_F(QueueTest, TestOnePushOnePop) {
+TEST_F(SequentialQueueTest, TestOnePushOnePop) {
     const int num_to_push = 1;
     int num_to_pop = -1;
     auto& pq = getQueue();
@@ -46,7 +46,7 @@ TEST_F(QueueTest, TestOnePushOnePop) {
     EXPECT_EQ(num_to_pop, num_to_push);
 }
 
-TEST_F(QueueTest, TestMultiPushAscendingOnePopOneChunk) {
+TEST_F(SequentialQueueTest, TestMultiPushAscendingOnePopOneChunk) {
     const int first_num_to_push = 10;
     auto& pq = getQueue();
     int num_to_pop = -1;
@@ -59,7 +59,7 @@ TEST_F(QueueTest, TestMultiPushAscendingOnePopOneChunk) {
     EXPECT_EQ(num_to_pop, first_num_to_push);
 }
 
-TEST_F(QueueTest, TestMultiPushDecendingOnePopOneChunk) {
+TEST_F(SequentialQueueTest, TestMultiPushDecendingOnePopOneChunk) {
     const int expected_pop = 10;
     auto& pq = getQueue();
     int num_to_pop = -1;
@@ -72,7 +72,7 @@ TEST_F(QueueTest, TestMultiPushDecendingOnePopOneChunk) {
     EXPECT_EQ(num_to_pop, expected_pop);
 }
 
-TEST_F(QueueTest, TestMultiPushDecendingMultiPopOneChunk) {
+TEST_F(SequentialQueueTest, TestMultiPushDecendingMultiPopOneChunk) {
     const int FIRST_POP = 10;
     const int LAST_POP = KIWI_CHUNK_SIZE - 10;
     auto& pq = getQueue();
@@ -89,7 +89,7 @@ TEST_F(QueueTest, TestMultiPushDecendingMultiPopOneChunk) {
     }
 }
 
-TEST_F(QueueTest, TestMultiPushPopDecendingOneChunk) {
+TEST_F(SequentialQueueTest, TestMultiPushPopDecendingOneChunk) {
     const int FIRST_POP = 10;
     const int LAST_POP = KIWI_CHUNK_SIZE - 10;
     auto& pq = getQueue();
@@ -102,7 +102,7 @@ TEST_F(QueueTest, TestMultiPushPopDecendingOneChunk) {
     }
 }
 
-TEST_F(QueueTest, TestMultiPushPopAscendingOneChunk) {
+TEST_F(SequentialQueueTest, TestMultiPushPopAscendingOneChunk) {
     const int FIRST_PUSH = 10;
     const int LAST_PUSH = KIWI_CHUNK_SIZE - 10;
     auto& pq = getQueue();
