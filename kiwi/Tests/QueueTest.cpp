@@ -79,3 +79,19 @@ TEST_F(QueueTest, TestMultiPushDecendingOnePopOneChunk) {
     pq.try_pop(num_to_pop);
     EXPECT_EQ(num_to_pop, expected_pop);
 }
+
+TEST_F(QueueTest, TestMultiPushDecendingMultiPopOneChunk) {
+    const int FIRST_POP = 10;
+    const int LAST_POP = KIWI_CHUNK_SIZE - 10;
+    auto &pq = getQueue();
+
+    for (int i = LAST_POP; i >= FIRST_POP; i--) {
+        pq.push(i);
+    }
+
+    for (int expected_pop = FIRST_POP; expected_pop <= LAST_POP; expected_pop++) {
+        int num_to_pop = -1;
+        pq.try_pop(num_to_pop);
+        EXPECT_EQ(num_to_pop, expected_pop);
+    }
+}

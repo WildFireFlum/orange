@@ -10,12 +10,9 @@ public:
 
     Allocator() {}
 
-    virtual void* allocate(unsigned int numOfBytes, unsigned int listIndex) {
-    }
+    virtual void* allocate(unsigned int numOfBytes, unsigned int listIndex) = 0;
 
-    virtual void deallocate(void *ptr, unsigned int listIndex) {
-        // Do not release memory in mock
-    }
+    virtual void deallocate(void *ptr, unsigned int listIndex) = 0;
 };
 
 
