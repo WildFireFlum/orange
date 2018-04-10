@@ -22,9 +22,9 @@ class ConcurrentQueueTest : public QueueTest {
     }
 
 protected:
-    std::thread spawnPushingThread(unsigned int numOfInsertions) {
-        auto result = std::thread([this, numOfInsertions](){
-            for (unsigned int i = 0; i < numOfInsertions; i++) {
+    std::thread spawnPushingThread(unsigned int numOfInsertions, int min_val) {
+        auto result = std::thread([this, numOfInsertions, min_val](){
+            for (unsigned int i = min_val; i < numOfInsertions; i++) {
                 std::cout << "thread " << getThreadId() << " pushing " << i << "\n";
                 m_pq->push(i);
             }
@@ -55,13 +55,17 @@ protected:
 int ConcurrentQueueTest::numOfThreads = 3;
 
 TEST_F(ConcurrentQueueTest, TestMorePushThanPopOneChunk) {
-    const int num_of_pushes = 5000;
-    const int num_of_pops = 500;
-    std::thread t1 = spawnPushingThread(num_of_pushes / 2);
+    const int num_of_pushes = (1024 * 5) + 1;
+    const int num_of_pops = 1024;
+    const int min_val = 1337;
+    std::thread t1 = spawnPushingThread(num_of_pushes / 2, 1337);
     std::thread t2 = spawnPoppingThread(num_of_pops);
-    std::thread t3 = spawnPushingThread(num_of_pushes / 2);
+    std::thread t3 = spawnPushingThread(num_of_pushes / 2, min_val * min_val);
     t1.join();
     t2.join();
     t3.join();
+    int popped = -1;
+    while (!getQueue().try_pop(popped)) {}
+    EXPECT_EQ(popped, min_val);
 }
 
