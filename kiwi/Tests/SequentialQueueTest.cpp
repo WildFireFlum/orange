@@ -91,3 +91,17 @@ TEST_F(SequentialQueueTest, TestMultiPushPopAscendingOneChunk) {
         EXPECT_EQ(popped, i);
     }
 }
+
+TEST_F(SequentialQueueTest, TestMultiPushPopDecendingMultipleChunks) {
+    const int FIRST_POP = 10;
+    const int LAST_POP = (KIWI_CHUNK_SIZE * 5) + 10;
+    auto& pq = getQueue();
+
+    for (int i = FIRST_POP; i >= LAST_POP; i--) {
+        pq.push(i);
+    }
+
+    int popped = -1;
+    pq.try_pop(popped);
+    EXPECT_EQ(popped, FIRST_POP);
+}
