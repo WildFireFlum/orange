@@ -3,7 +3,12 @@
 //
 
 #include "QueueTest.h"
+
+#ifndef __linux__
 #include "../lib/mingw-threading/thread.h"
+#else
+#include <thread>
+#endif
 
 class ConcurrentQueueTest : public QueueTest {
    public:
