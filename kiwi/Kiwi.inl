@@ -71,6 +71,7 @@ class KiwiChunk {
 
     typedef struct element_t {
         K key;
+        volatile int deleted;
         struct element_t* volatile next;
     } Element;
 
@@ -101,16 +102,16 @@ class KiwiChunk {
     uint32_t ppa_len;
     uint32_t volatile ppa[0];
 
-    static bool is_marked(Element* i) {
-        return ((uintptr_t)i & (uintptr_t)0x01) != 0;
+    static bool is_marked(Element* j) {
+        return ((uintptr_t)j & (uintptr_t)0x01) != 0;
     }
 
-    static Element* unset_mark(Element* i) {
-        return reinterpret_cast<Element*>((uintptr_t)i & ~(uintptr_t)0x01);
+    static Element* unset_mark(Element* j) {
+        return reinterpret_cast<Element*>((uintptr_t)j & ~(uintptr_t)0x01);
     }
 
-    static Element* set_mark(Element* i) {
-        return reinterpret_cast<Element*>((uintptr_t)i | (uintptr_t)0x01);
+    static Element* set_mark(Element* j) {
+        return reinterpret_cast<Element*>((uintptr_t)j | (uintptr_t)0x01);
     }
 
     void init() {
@@ -118,11 +119,20 @@ class KiwiChunk {
         end_sentinel.next = nullptr;
         status = INFANT_CHUNK;
         ppa_len = getNumOfThreads();
-        i = 0;
-        for (int i = 0; i < ppa_len; i++) {
-            ppa[i] = IDLE;
+        this->i = 0;
+
+        // initialize ppa entries
+        for (int j = 0; j < ppa_len; j++) {
+            ppa[j] = IDLE;
         }
+
+        // initialize next pointers of all elements
+        for (int j = 0; j < KIWI_CHUNK_SIZE - 1; j++) {
+            k[j].next = &k[j + 1];
+        }
+        k[KIWI_CHUNK_SIZE - 1].next = &end_sentinel;
     }
+
 
     /// Based on lock free list from "The art of multiprocessor programming"
     void find(const Comparer& compare,
@@ -151,7 +161,7 @@ class KiwiChunk {
                         goto retry;
                     }
                     curr = succ;
-                    succ = curr->next;
+                    succ = unset_mark(curr->next);
                 }
                 if (succ == &end_sentinel) {
                     out_prev = curr;
@@ -170,16 +180,17 @@ class KiwiChunk {
         }
     }
 
-    void push(const Comparer &compare, Element &element_to_insert) {
-        const K &key = element_to_insert.key;
-        while (true) {
-            Element *prev;
-            Element *next;
-            find(compare, key, prev, next);
 
-            element_to_insert.next = next;
-            if (ATOMIC_CAS_MB(&(prev->next), unset_mark(next),
-                              unset_mark(&element_to_insert))) {
+    void push(const Comparer& compare, Element& element) {
+        const K& key = element.key;
+        while (true) {
+            Element* left;
+            Element* right;
+            find(compare, key, left, right);
+
+            element.next = right;
+            if (ATOMIC_CAS_MB(&(left->next), unset_mark(right),
+                              unset_mark(&element))) {
                 return;
             }
         }
@@ -187,12 +198,12 @@ class KiwiChunk {
 
     void freeze() {
         status = ChunkStatus::FROZEN_CHUNK;
-        for (uint32_t i = 0; i < ppa_len; i++) {
-            uint32_t ppa_i;
+        for (uint32_t j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j;
             do {
-                ppa_i = ppa[i];
-            } while (!(ppa_i & FROZEN) &&
-                     !ATOMIC_CAS_MB(&ppa[i], ppa_i, ppa_i | FROZEN));
+                ppa_j = ppa[j];
+            } while (!(ppa_j & FROZEN) &&
+                     !ATOMIC_CAS_MB(&ppa[j], ppa_j, ppa_j | FROZEN));
         }
     }
 
@@ -235,15 +246,17 @@ class KiwiChunk {
         // add all list elements
         Element* element = begin_sentinel.next;
         while (element != &end_sentinel) {
-            set.insert(element);
-            element = element->next;
+            if (!element->deleted) {
+                set.insert(element);
+            }
+            element = unset_mark(element->next);
         }
 
         // add pending push
-        for (int i = 0; i < ppa_len; i++) {
-            uint32_t ppa_i = ppa[i];
-            if (ppa_i & PUSH) {
-                uint32_t index = ppa_i & IDLE;
+        for (int j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j = ppa[j];
+            if (ppa_j & PUSH) {
+                uint32_t index = ppa_j & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
                     set.insert(&k[index]);
                 }
@@ -251,10 +264,10 @@ class KiwiChunk {
         }
 
         // remove pending pop
-        for (int i = 0; i < ppa_len; i++) {
-            uint32_t ppa_i = ppa[i];
-            if (ppa_i & POP) {
-                uint32_t index = ppa_i & IDLE;
+        for (int j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j = ppa[j];
+            if (ppa_j & POP) {
+                uint32_t index = ppa_j & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
                     set.erase(&k[index]);
                 }
@@ -274,33 +287,46 @@ class KiwiChunk {
         }
 
         Element* currElem = &begin_sentinel;
-        Element* nextElem;
 
         while (true) {
+            // 1. find not deleted element
             do {
                 currElem = unset_mark(currElem->next);
+            } while (currElem->next && (currElem->deleted));
+
+            if (!currElem->next) {
+                // end of the list
+                return false;
+            }
+
+            // 2. publish pop
+            if (!publish_pop((uint32_t)(currElem - k))) {
+                // chunk is being rebalanced
+                return false;
+            }
+
+            // 3. try to mark element as deleted
+            if (ATOMIC_FETCH_AND_INC_FULL(&(currElem->deleted)) != 0) {
+                // someone else deleted the element before us, continue
+                continue;
+            }
+
+            // 4. deleted - pop from elements list
+            if (!currElem->next) {
+                return false;
+            }
+
+            key = (currElem->key);
+            Element* nextElem;
+            do {
                 nextElem = currElem->next;
-            } while (nextElem && is_marked(nextElem));
+                if (is_marked(nextElem)) {
+                    break;
+                }
+            } while (!ATOMIC_CAS_MB(&currElem->next, nextElem, set_mark(nextElem)));
 
-            if (!nextElem ||
-                ATOMIC_CAS_MB(&currElem->next, nextElem, set_mark(nextElem))) {
-                break;
-            }
+            return true;
         }
-
-        if (!currElem->next) {
-            return false;
-        }
-
-        key = (currElem->key);
-        do {
-            nextElem = currElem->next;
-            if (is_marked(nextElem)) {
-                break;
-            }
-        } while (!ATOMIC_CAS_MB(&currElem->next, nextElem, set_mark(nextElem)));
-
-        return true;
     }
 };
 
@@ -325,16 +351,16 @@ class KiWiPQ {
     chunk_t end_sentinel;
     // LockFreeSkipListSet<Comparer, K, chunk_t*> index;
 
-    static bool is_marked(chunk_t* i) {
-        return ((uintptr_t)i & (uintptr_t)0x01) != 0;
+    static bool is_marked(chunk_t* j) {
+        return ((uintptr_t)j & (uintptr_t)0x01) != 0;
     }
 
-    static chunk_t* unset_mark(chunk_t* i) {
-        return reinterpret_cast<chunk_t*>((uintptr_t)i & ~(uintptr_t)0x01);
+    static chunk_t* unset_mark(chunk_t* j) {
+        return reinterpret_cast<chunk_t*>((uintptr_t)j & ~(uintptr_t)0x01);
     }
 
-    static chunk_t* set_mark(chunk_t* i) {
-        return reinterpret_cast<chunk_t*>((uintptr_t)i | (uintptr_t)0x01);
+    static chunk_t* set_mark(chunk_t* j) {
+        return reinterpret_cast<chunk_t*>((uintptr_t)j | (uintptr_t)0x01);
     }
 
     chunk_t* new_chunk() {
@@ -374,14 +400,14 @@ class KiWiPQ {
 
     void rebalance(chunk_t* chunk) {
         // 1. engage
-        rebalance_object_t* tmp = new_ro(chunk, chunk->next);
+        rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
         }
         rebalance_object_t* ro = chunk->ro;
         volatile chunk_t* last = chunk;
         while (true) {
-            volatile chunk_t* next = ro->next;
+            volatile chunk_t* next = unset_mark(ro->next);
             if (next == nullptr) {
                 break;
             }
@@ -389,7 +415,7 @@ class KiWiPQ {
                 ATOMIC_CAS_MB(&next, nullptr, ro);
 
                 if (next->ro == ro) {
-                    ATOMIC_CAS_MB(&(ro->next), next, next->next);
+                    ATOMIC_CAS_MB(&(ro->next), next, unset_mark(next->next));
                     last = next;
                 } else {
                     ATOMIC_CAS_MB(&(ro->next), next, nullptr);
@@ -398,17 +424,17 @@ class KiWiPQ {
                 ATOMIC_CAS_MB(&(ro->next), next, nullptr);
             }
         }
-        // std::raise(SIGINT);
+
         // search for last concurrently engaged chunk
-        while (last->next != nullptr && last->next->ro == ro) {
-            last = last->next;
+        while (unset_mark(last->next) != nullptr && unset_mark(last->next)->ro == ro) {
+            last = unset_mark(last->next);
         }
 
         // 2. freeze
         chunk_t* t = ro->first;
         do {
             t->freeze();
-        } while ((t != last) && (t = t->next));
+        } while ((t != last) && (t = unset_mark(t->next)));
 
         // 3. pick minimal version
         // ... we don't have scans so we don't need this part
@@ -422,13 +448,15 @@ class KiWiPQ {
             K arr[KIWI_CHUNK_SIZE];
             uint32_t count = c->get_keys(arr);
             std::sort(arr, arr + count, compare);
-            for (uint32_t j; j < count; j++) {
+            for (uint32_t j = 0; j < count; j++) {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
-                    Cn->next = new_chunk();
-                    Cn = Cn->next;
-                    Cn->parent = chunk;
-                    Cn->min_key = arr[j];
+
+                    Cn->k[Cn->i - 1].next = &Cn->end_sentinel;  // close Cn inner list
+                    Cn->next = new_chunk();                     // create a new chunk and set Cn->next points to it
+                    Cn = Cn->next;                              // Cn points to the new chunk
+                    Cn->parent = chunk;                         // set chunk as rebalance parent of the new chunk
+                    Cn->min_key = arr[j];                       // set chunk min key - this value won't be change
 
                     // TODO: delete it as soon as we use index again
                     Cn->status = NORMAL_CHUNK;
@@ -438,7 +466,7 @@ class KiWiPQ {
                 Cn->k[i].next = &(Cn->k[i + 1]);
                 Cn->i++;
             }
-        } while ((c != last) && (c = c->next));
+        } while ((c != last) && (c = unset_mark(c->next)));
 
         // 5. replace
         do {
@@ -456,20 +484,20 @@ class KiWiPQ {
                 chunk_t* curr = ro->first;
                 chunk_t* next;
                 do {
-                    next = curr->next;
+                    next = unset_mark(curr->next);
                     delete_chunk(curr);
                 } while ((curr != last) && (curr = next));
 
                 return;
             }
 
-            if (pred->next->parent == chunk) {
+            if (unset_mark(pred->next)->parent == chunk) {
                 // someone else succeeded - delete the chunks we just created
                 // and normalize
                 chunk_t* curr = Cf;
                 chunk_t* next;
                 do {
-                    next = curr->next;
+                    next = unset_mark(curr->next);
                     delete_chunk(curr);
                 } while ((curr != Cn) && (curr = next));
 
@@ -487,7 +515,7 @@ class KiWiPQ {
 
     chunk_t* locate_target_chunk(const K& key) {
         chunk_t* c = &begin_sentinel;  // index.get(key);
-        chunk_t* next = c->next;
+        chunk_t* next = unset_mark(c->next);
         if (next == &end_sentinel) {
             // the chunk list is empty, we need to create one
             chunk_t* chunk = new_chunk();
@@ -502,7 +530,7 @@ class KiWiPQ {
 
         while (next != &end_sentinel && !compare(next->min_key, key)) {
             c = next;
-            next = c->next;
+            next = unset_mark(c->next);
         }
 
         if (c == &begin_sentinel) {
@@ -516,10 +544,10 @@ class KiWiPQ {
     chunk_t* load_prev(chunk_t* chunk) {
         // TODO: should use index instead of traversing the list
         chunk_t* prev = &begin_sentinel;
-        chunk_t* curr = prev->next;
+        chunk_t* curr = unset_mark(prev->next);
         while (curr != &end_sentinel && curr != chunk) {
             prev = curr;
-            curr = prev->next;
+            curr = unset_mark(prev->next);
         }
 
         if (curr == &end_sentinel) {
@@ -558,8 +586,8 @@ class KiWiPQ {
             return push(key);
         }
 
-        uint32_t i = ATOMIC_FETCH_AND_INC_FULL(
-            &chunk->i);  // allocate cell in linked list
+        // allocate cell in linked list
+        uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);
 
         if (i >= KIWI_CHUNK_SIZE) {
             // no more free space - trigger rebalance
@@ -581,7 +609,7 @@ class KiWiPQ {
     }
 
     bool try_pop(K& key) {
-        chunk_t* chunk = begin_sentinel.next;
+        chunk_t* chunk = unset_mark(begin_sentinel.next);
         while (chunk != &end_sentinel) {
             if (chunk->try_pop(key)) {
                 return true;
@@ -593,10 +621,10 @@ class KiWiPQ {
                 return try_pop(key);
             }
 
-            chunk = chunk->next;
+            chunk = unset_mark(chunk->next);
         }
         return false;
     }
 };
 
-#endif  // GALOIS_KIWI_H
+#endif  // __GALOIS_KIWI_H__
