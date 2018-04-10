@@ -239,7 +239,7 @@ class KiwiChunk {
         // add pending push
         for (int j = 0; j < ppa_len; j++) {
             uint32_t ppa_j = ppa[j];
-            if (ppa_i & PUSH) {
+            if (ppa_j & PUSH) {
                 uint32_t index = ppa_j & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
                     set.insert(&k[index]);
