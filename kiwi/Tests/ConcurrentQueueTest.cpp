@@ -52,20 +52,32 @@ protected:
 
 };
 
-int ConcurrentQueueTest::numOfThreads = 3;
+int ConcurrentQueueTest::numOfThreads = 8;
 
-TEST_F(ConcurrentQueueTest, TestMorePushThanPopOneChunk) {
-    const int num_of_pushes = (1024 * 5) + 1;
-    const int num_of_pops = 1024;
+TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
+    const int num_of_pushes = (1024 * 512) + 1;
     const int min_val = 1337;
-    std::thread t1 = spawnPushingThread(num_of_pushes / 2, 1337);
-    std::thread t2 = spawnPoppingThread(num_of_pops);
-    std::thread t3 = spawnPushingThread(num_of_pushes / 2, min_val * min_val);
-    t1.join();
-    t2.join();
-    t3.join();
-    int popped = -1;
-    while (!getQueue().try_pop(popped)) {}
-    EXPECT_EQ(popped, min_val);
+    int total_inserted = 0;
+
+    std::vector<std::thread> threads;
+    for (unsigned int i = 0; i < numOfThreads; i++) {
+        const unsigned int to_insert = num_of_pushes / numOfThreads;
+        threads.push_back(spawnPushingThread(to_insert, min_val * i));
+        total_inserted += to_insert;
+    }
+
+    for (unsigned int i = 0; i < numOfThreads; i++) {
+        threads[i].join();
+    }
+
+    int pop_count = 0;
+    while (pop_count < total_inserted) {
+        int popped = -1;
+        if(getQueue().try_pop(popped)) {
+            std::cout << "Thread " << getThreadId() <<  " popped: " << popped;
+            pop_count++;
+        }
+    }
+    EXPECT_EQ(pop_count, total_inserted);
 }
 
