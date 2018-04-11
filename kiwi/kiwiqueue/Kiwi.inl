@@ -375,7 +375,7 @@ class KiWiPQ {
         return chunk;
     }
 
-    void delete_chunk(chunk_t* chunk) { allocator->deallocate(chunk, 0); }
+    void delete_chunk(chunk_t* chunk) { /* allocator->deallocate(chunk, 0); */}
 
     rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
         rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(
@@ -384,7 +384,7 @@ class KiWiPQ {
         return ro;
     }
 
-    void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1); }
+    void delete_ro(rebalance_object_t* ro) { /* allocator->deallocate(ro, 1); */}
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
