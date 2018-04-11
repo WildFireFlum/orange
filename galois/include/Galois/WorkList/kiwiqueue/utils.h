@@ -2,43 +2,23 @@
 // Created by Ynon on 10/04/2018.
 //
 
+
 #ifndef KIWI_UTILS_H
 #define KIWI_UTILS_H
 
 #define NUMOFTHREADS 1
-
-
-unsigned int getNumOfThreads() {
-#ifdef GALOIS
-    return Galois::Runtime::activeThreads;
-#else
-    return NUMOFTHREADS;
-#endif
-}
-
 #define FAKETID 0xdeaddaed
 
-static unsigned nextID = 0;
-
-struct AtomicNextId {
-    unsigned next() {
-        return __sync_fetch_and_add(&nextID, 1);
-    }
+class NextId {
+public:
+    unsigned next();
 };
-typedef AtomicNextId NextId;
 
-static NextId next;
-__thread unsigned TID = FAKETID;
+extern unsigned nextID;
+extern NextId next;
 
-unsigned int getThreadId() {
-#ifdef GALOIS
-    return Galois::Runtime::LL::getTID();
-#else
-    if (TID == FAKETID) {
-        TID = next.next();
-    }
-    return TID;
-#endif
-}
+unsigned int getNumOfThreads();
+
+unsigned int getThreadId();
 
 #endif //KIWI_UTILS_H

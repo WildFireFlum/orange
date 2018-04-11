@@ -9,5 +9,6 @@
 
 #include "GaloisAllocator.h"
 #include "Kiwi.inl"
+#include "Utils.cpp"
 
 #endif //KIWI_KIWIGLOISINCLUDE_H
