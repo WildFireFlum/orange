@@ -22,6 +22,10 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
                                            num_threads),
           num_of_rebalances(0) {}
 
+    unsigned int getRebalanceCount() {
+        return num_of_rebalances;
+    }
+
    protected:
     virtual void rebalance(chunk_t* chunk) {
         ATOMIC_FETCH_AND_INC_FULL(&num_of_rebalances);
