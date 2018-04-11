@@ -2,7 +2,6 @@
 #define __GALOIS_KIWI_H__
 
 #include <algorithm>
-#include <set>
 
 #include "Utils.h"
 #include "Allocator.h"
@@ -241,13 +240,13 @@ class KiwiChunk {
             return 0;
         }
 
-        std::set<element_t*> set;
+        bool flags[KIWI_CHUNK_SIZE] = {false};
 
         // add all list elements
         element_t* element = begin_sentinel.next;
         while (element != &end_sentinel) {
             if (!element->deleted) {
-                set.insert(element);
+                flags[element - k] = true;
             }
             element = unset_mark(element->next);
         }
@@ -258,7 +257,7 @@ class KiwiChunk {
             if (ppa_j & PUSH) {
                 uint32_t index = ppa_j & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
-                    set.insert(&k[index]);
+                    flags[index] = true;
                 }
             }
         }
@@ -269,14 +268,16 @@ class KiwiChunk {
             if (ppa_j & POP) {
                 uint32_t index = ppa_j & IDLE;
                 if (index < KIWI_CHUNK_SIZE) {
-                    set.erase(&k[index]);
+                    flags[index] = false;
                 }
             }
         }
 
         uint32_t count = 0;
-        for (auto& setElement : set) {
-            arr[count++] = setElement->key;
+        for (int j = 0; j < KIWI_CHUNK_SIZE; j++) {
+            if (flags[j]) {
+                arr[count++] = k[j].key;
+            }
         }
         return count;
     }
@@ -474,21 +475,40 @@ class KiWiPQ {
             }
         } while ((c != last) && (c = unset_mark(c->next)));
 
-        // we need to close the last chunk as well
-        Cn->min_key = Cn->k[0].key;                  // set Cn min key - this value won't be change
-        Cn->begin_sentinel.next = &Cn->k[0];         // connect begin sentinel to the list
-        Cn->k[Cn->i - 1].next = &(Cn->end_sentinel); // close the list by point the last key to the end sentinel
+        bool is_empty = false;
+
+        if (Cn->i > 0) {
+            // we need to close the last chunk as well
+            Cn->min_key = Cn->k[0].key;                  // set Cn min key - this value won't be change
+            Cn->begin_sentinel.next = &Cn->k[0];         // connect begin sentinel to the list
+            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel); // close the list by point the last key to the end sentinel
+        } else {
+            // all the chunks in ro are empty
+            delete_chunk(Cn);
+            Cf = Cn = nullptr;
+            is_empty = true;
+        }
+
 
         // 5. replace
         do {
-            Cn->next = last->next;
-        } while (!is_marked(Cn->next) &&
-                 !ATOMIC_CAS_MB(&(last->next), unset_mark(Cn->next),
-                                set_mark(Cn->next)));
+            c = last->next;
+        } while (!is_marked(c) &&
+                 !ATOMIC_CAS_MB(&(last->next), unset_mark(c),
+                                set_mark(c)));
+
+        if(!is_empty) {
+            Cn->next = c;
+        }
 
         do {
-            chunk_t* pred = load_prev(chunk);
-            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(c), unset_mark(Cf))) {
+            //TODO: should validate this part ...
+            chunk_t* pred = load_prev(ro->first);
+            if (!is_empty) {
+                c = Cf;
+            }
+
+            if (pred != nullptr && ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
                 // success - normalize chunk and free old chunks
                 // normalize(chunk);
 
@@ -499,19 +519,21 @@ class KiWiPQ {
                     delete_chunk(curr);
                 } while ((curr != last) && (curr = next));
 
+                delete_ro(ro);
                 return;
             }
 
-            if (unset_mark(pred->next)->parent == chunk) {
+            if (pred == nullptr || unset_mark(pred->next)->parent == chunk) {
                 // someone else succeeded - delete the chunks we just created
                 // and normalize
-                chunk_t* curr = Cf;
-                chunk_t* next;
-                do {
-                    next = unset_mark(curr->next);
-                    delete_chunk(curr);
-                } while ((curr != Cn) && (curr = next));
-
+                if (!is_empty) {
+                    chunk_t *curr = Cf;
+                    chunk_t *next;
+                    do {
+                        next = unset_mark(curr->next);
+                        delete_chunk(curr);
+                    } while ((curr != Cn) && (curr = next));
+                }
                 // normalize(chunk);
                 return;
             }
