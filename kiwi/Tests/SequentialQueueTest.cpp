@@ -1,7 +1,5 @@
-//
-// Created by Ynon on 26/03/2018.
-//
 #include "QueueTest.h"
+#include <algorithm>
 
 class SequentialQueueTest : public QueueTest {
    public:
@@ -97,11 +95,30 @@ TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
     const int LAST_POP = (KIWI_CHUNK_SIZE * 5) + 10;
     auto& pq = getQueue();
 
-    for (int i = FIRST_POP; i >= LAST_POP; i--) {
+    for (int i = FIRST_POP; i <= LAST_POP; i++) {
         pq.push(i);
     }
 
     int popped = -1;
     pq.try_pop(popped);
     EXPECT_EQ(popped, FIRST_POP);
+}
+
+TEST_F(SequentialQueueTest, TestHeapSort) {
+    const int COUNT = (KIWI_CHUNK_SIZE) * 5 + 10;
+    auto& pq = getQueue();
+    srand(0xdeadbeef);
+
+    int arr[COUNT];
+    for (int i = 0 ; i < COUNT; i ++) {
+        arr[i] = rand();
+        EXPECT_TRUE(pq.push(arr[i]));
+    }
+
+    int popped = -1;
+    std::sort(arr, arr + COUNT);
+    for (int i = 0 ; i < COUNT; i ++) {
+        EXPECT_TRUE(pq.try_pop(popped));
+        EXPECT_EQ(arr[i], popped);
+    }
 }
