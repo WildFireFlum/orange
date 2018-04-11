@@ -402,7 +402,7 @@ class KiWiPQ {
         return false;
     }
 
-    void rebalance(chunk_t* chunk) {
+    virtual void rebalance(chunk_t* chunk) {
         // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
@@ -616,6 +616,8 @@ class KiWiPQ {
         begin_sentinel.min_key = begin_key;
         end_sentinel.min_key = end_key;
     }
+
+    virtual ~KiWiPQ() = default;
 
     bool push(const K& key) {
         chunk_t* chunk = locate_target_chunk(key);

@@ -6,7 +6,7 @@
 #define KIWI_QUEUETEST_H
 
 #include <gtest/gtest.h>
-#include "../kiwiqueue/Kiwi.inl"
+#include "KiwiPqMock.h"
 #include "../kiwiqueue/MockAllocator.h"
 
 template <typename T>
@@ -15,7 +15,7 @@ public:
     bool operator()(const T& t1, const T& t2) const { return t1 < t2; }
 };
 
-using kiwipq_t = KiWiPQ<MockComparer<int>, int, MockAllocator>;
+using kiwipq_t = KiwiPQMock<MockComparer<int>, int, MockAllocator>;
 
 class QueueTest : public testing::Test {
 public:
