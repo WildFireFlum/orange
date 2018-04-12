@@ -21,11 +21,12 @@ class ConcurrentQueueTest : public QueueTest {
         m_pq = new kiwipq_t(m_allocator, 0, 13371337, numOfThreads);
     }
 
-protected:
+   protected:
     std::thread spawnPushingThread(unsigned int numOfInsertions, int min_val) {
-        auto result = std::thread([this, numOfInsertions, min_val](){
+        auto result = std::thread([this, numOfInsertions, min_val]() {
             for (unsigned int i = min_val; i < numOfInsertions + min_val; i++) {
-                std::cout << "thread " << getThreadId() << " pushing " << i << "\n";
+                std::cout << "thread " << getThreadId() << " pushing " << i
+                          << "\n";
                 m_pq->push(i);
             }
         });
@@ -36,22 +37,22 @@ protected:
         auto result = std::thread([this, numOfPops]() {
             // Try to make sure we don't pop first
             std::this_thread::yield();
-            for (unsigned int i = 0; i < numOfPops; i++) {
+            unsigned int popCount = 0;
+            while (popCount < numOfPops) {
                 std::cout << "thread " << getThreadId() << " popping ";
                 int popped = -1;
                 if (m_pq->try_pop(popped)) {
                     std::cout << "value " << popped << "\n";
                     EXPECT_NE(popped, -1);
                     popped = -1;
-                }
-                else {
+                    popCount++;
+                } else {
                     std::cout << "nothing, pop failed\n";
                 }
             }
         });
         return std::move(result);
     }
-
 };
 
 int ConcurrentQueueTest::numOfThreads = 8;
@@ -89,9 +90,7 @@ TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
 
 TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
     const int numToPush = 1;
-    auto pushNumber = [this]() {
-        getQueue().push(numToPush);
-    };
+    auto pushNumber = [this]() { getQueue().push(numToPush); };
 
     // Fill a chunk with ones
     for (int i = 0; i < KIWI_CHUNK_SIZE; i++) {
@@ -99,7 +98,6 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
     }
     EXPECT_EQ(getQueue().getNumOfChunks(), 1);
     EXPECT_EQ(getQueue().getRebalanceCount(), 0);
-
 
     std::vector<std::thread> threads;
     for (auto i = 0; i < numOfThreads; i++) {
@@ -116,38 +114,40 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
     std::cout << "Rebalance count: " << getQueue().getRebalanceCount() << "\n";
 }
 
-
 TEST_F(ConcurrentQueueTest, TestStressPushPop) {
-    const auto num_of_pushes = (KIWI_CHUNK_SIZE * 128) + 1;
-    const auto num_of_thread_pops = 512;
-    const auto num_of_popping_threads = numOfThreads * 0.75;
-    const auto num_of_pushing_threads = numOfThreads * 0.25;
+    const auto num_of_pushes = KIWI_CHUNK_SIZE * 1024;
+    const auto num_of_pops = KIWI_CHUNK_SIZE * 64;
+    const auto num_of_popping_threads = numOfThreads * 0.50;
+    const auto num_of_pushing_threads = numOfThreads * 0.50;
+
     // Make sure no duplicate values
-    const auto min_val = (num_of_pushes / numOfThreads) + 1;
+    const auto min_val = (num_of_pushes / num_of_pushing_threads) + 1;
 
     auto total_inserted = 0;
 
     std::vector<std::thread> threads;
     for (auto i = 0; i < num_of_pushing_threads; i++) {
-        const auto to_insert = num_of_pushes / numOfThreads;
+        const auto to_insert = num_of_pushes / num_of_pushing_threads;
         threads.push_back(spawnPushingThread(to_insert, min_val * i));
         total_inserted += to_insert;
     }
 
     for (auto i = 0; i < num_of_popping_threads; i++) {
-        threads.push_back(spawnPoppingThread(num_of_thread_pops));
+        threads.push_back(spawnPoppingThread(num_of_pops / num_of_popping_threads));
     }
 
     for (auto& thread : threads) {
         thread.join();
     }
 
+    const auto queueFinalSize = getQueue().size();
     // Make sure that all items were pushed
-    EXPECT_EQ(total_inserted - num_of_thread_pops, getQueue().size());
+    EXPECT_EQ(total_inserted - num_of_pops, queueFinalSize);
 
+    
     // Make sure queue is sorted
     auto prev = -1;
-    for (auto i = 0; i < total_inserted; i++) {
+    for (auto i = 0; i < queueFinalSize; i++) {
         int curr;
         EXPECT_TRUE(getQueue().try_pop(curr));
         // Every item is inserted only once
