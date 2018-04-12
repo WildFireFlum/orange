@@ -418,7 +418,81 @@ class KiWiPQ {
         return false;
     }
 
+
+    bool func(chunk_t* chunk) {
+        chunk->freeze();
+
+        K arr[KIWI_CHUNK_SIZE];
+        uint32_t count = chunk->get_keys(arr);
+        std::sort(arr, arr + count, compare);
+        chunk_t* Cn = new_chunk();
+        chunk_t* Cf = Cn;
+
+        for (uint32_t j = 0; j < count; j++) {
+            if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
+                // Cn is more than half full - create new chunk
+
+                Cn->min_key = Cn->k[0].key;                  // set Cn min key - this value won't be change
+                Cn->begin_sentinel.next = &Cn->k[0];         // connect begin sentinel to the list
+                Cn->k[Cn->i - 1].next = &(Cn->end_sentinel); // close the list by point the last key to the end sentinel
+
+                Cn->next = new_chunk();                      // create a new chunk and set Cn->next points to it
+                Cn = Cn->next;                               // Cn points to the new chunk
+                Cn->parent = chunk;                          // set chunk as rebalance parent of the new chunk
+
+                // TODO: delete it as soon as we use index again
+                Cn->status = NORMAL_CHUNK;
+            }
+            uint32_t i = Cn->i;
+            Cn->k[i].key = arr[j];
+            Cn->k[i].next = &(Cn->k[i + 1]);
+            Cn->i++;
+        }
+
+        if (Cn->i > 0) {
+            // we need to close the last chunk as well
+            Cn->min_key = Cn->k[0].key;                  // set Cn min key - this value won't be change
+            Cn->begin_sentinel.next = &Cn->k[0];         // connect begin sentinel to the list
+            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel); // close the list by point the last key to the end sentinel
+        } else {
+            // all the chunks in ro are empty
+            delete_chunk(Cn);
+            Cn = Cf = nullptr;
+        }
+
+        chunk_t* next;
+        // 5. replace
+        do {
+            next = chunk->next;
+            if (is_marked(next)) {
+                break;
+            }
+        } while (!ATOMIC_CAS_MB(&(chunk->next), next, set_mark(next)));
+
+        if (Cn) Cn->next = next;
+        chunk_t* c = (Cf == nullptr) ? next : Cf;
+        do {
+            //TODO: should validate this part ...
+            chunk_t* pred = load_prev(chunk);
+            if (pred == nullptr) {
+                if (Cf != Cn) delete_chunk(Cf);
+                if (Cn) delete_chunk(Cn);
+                return true;
+            }
+
+            if (ATOMIC_CAS_MB(&(pred->next), chunk, c)) {
+                reclaim_chunk(chunk);
+                return true;
+            }
+        } while (true);
+
+    }
+
     virtual void rebalance(chunk_t* chunk) {
+        // TODO tmp
+        if (func(chunk)) {
+            return;
+        }
         // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
