@@ -24,7 +24,7 @@ class ConcurrentQueueTest : public QueueTest {
 protected:
     std::thread spawnPushingThread(unsigned int numOfInsertions, int min_val) {
         auto result = std::thread([this, numOfInsertions, min_val](){
-            for (unsigned int i = min_val; i < numOfInsertions; i++) {
+            for (unsigned int i = min_val; i < numOfInsertions + min_val; i++) {
                 std::cout << "thread " << getThreadId() << " pushing " << i << "\n";
                 m_pq->push(i);
             }
@@ -55,7 +55,7 @@ protected:
 int ConcurrentQueueTest::numOfThreads = 8;
 
 TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
-    const auto num_of_pushes = (1024 * 64) + 1;
+    const auto num_of_pushes = (KIWI_CHUNK_SIZE * 64) + 1;
     const auto min_val = 1337;
     auto total_inserted = 0;
 
@@ -70,19 +70,15 @@ TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
         thread.join();
     }
 
-    auto pop_count = 0;
-    std::vector<int> all_popped_vector(total_inserted);
-    std::set<int> all_popped_set;
-    while (pop_count < total_inserted) {
-        int popped = -1;
-        if(getQueue().try_pop(popped)) {
-            std::cout << "Thread " << getThreadId() <<  " popped: " << popped << "\n";
-            all_popped_set.insert(popped);
-            all_popped_vector[pop_count] = popped;
-            pop_count++;
-            EXPECT_EQ(all_popped_set.size(), all_popped_vector.size());
-        }
+    EXPECT_EQ(total_inserted, getQueue().print());
+    int prev = -1;
+    for (auto i = 0; i < total_inserted; i++) {
+        int curr;
+        EXPECT_TRUE(getQueue().try_pop(curr));
+        EXPECT_GE(curr, prev);
+        prev = curr;
     }
-    EXPECT_EQ(pop_count, total_inserted);
+    // validate the queue is empty
+    EXPECT_FALSE(getQueue().try_pop(prev));
 }
 
