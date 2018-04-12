@@ -461,12 +461,14 @@ class KiWiPQ {
         }
 
         chunk_t* next;
-        // 5. replace
+        uint64_t max_iter = 1 << 28;
+        int loop_count1 = 0;
         do {
             next = chunk->next;
             if (is_marked(next)) {
                 break;
             }
+            if (loop_count1++ == max_iter) printf("thread id % d, loop %d\n", getThreadId(), 1);
         } while (!ATOMIC_CAS_MB(&(chunk->next), next, set_mark(next)));
 
         if (Cn) Cn->next = next;
@@ -484,6 +486,7 @@ class KiWiPQ {
                 reclaim_chunk(chunk);
                 return true;
             }
+            if (loop_count1++ == max_iter) printf("thread id % d, loop %d\n", getThreadId(), 2);
         } while (true);
 
     }
