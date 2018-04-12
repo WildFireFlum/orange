@@ -38,6 +38,10 @@ public:
         // Do not release memory in mock
     }
 
+    void reclaim(void* ptr, unsigned int listIndex) {
+        // Do not release memory in mock
+    }
+
     unsigned int getNumOfChunkAllocs() {
         return m_chunk_allocations;
     }

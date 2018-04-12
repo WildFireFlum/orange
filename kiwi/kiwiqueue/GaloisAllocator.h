@@ -20,8 +20,13 @@ public:
     }
 
     void deallocate(void* ptr, unsigned int listIndex) {
-        int e = (term.getEpoch() + 2) % 3;
+        int e = term.getEpoch();
         heap[e].deallocate(ptr, listIndex);
+    }
+
+    void reclaim(void* ptr, unsigned int listIndex) {
+        int e = (term.getEpoch() + 2) % 3;
+        //TODO heap[e].deallocate(ptr, listIndex);
     }
 
 private:
