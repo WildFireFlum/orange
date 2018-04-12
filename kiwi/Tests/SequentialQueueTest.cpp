@@ -109,18 +109,23 @@ TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
 TEST_F(SequentialQueueTest, TestHeapSort) {
     const int COUNT = (KIWI_CHUNK_SIZE) * 5 + 10;
     auto& pq = getQueue();
-    srand(0xdeadbeef);
 
-    int arr[COUNT];
-    for (int i = 0 ; i < COUNT; i ++) {
-        arr[i] = rand();
-        EXPECT_TRUE(pq.push(arr[i]));
-    }
+    int seed = 0;
+    while (seed < 1159) {
+        srand(seed);
 
-    int popped = -1;
-    std::sort(arr, arr + COUNT);
-    for (int i = 0 ; i < COUNT; i ++) {
-        EXPECT_TRUE(pq.try_pop(popped));
-        EXPECT_EQ(arr[i], popped);
+        int arr[COUNT];
+        for (int i = 0 ; i < COUNT; i ++) {
+            arr[i] = std::rand();
+            EXPECT_TRUE(pq.push(arr[i]));
+        }
+
+        int popped = -1;
+        std::sort(arr, arr + COUNT);
+        for (int i = 0 ; i < COUNT; i ++) {
+            EXPECT_TRUE(pq.try_pop(popped));
+            EXPECT_EQ(arr[i], popped);
+        }
+        seed++;
     }
 }
