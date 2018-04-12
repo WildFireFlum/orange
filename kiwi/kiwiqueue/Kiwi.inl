@@ -2,6 +2,7 @@
 #define __GALOIS_KIWI_H__
 
 #include <algorithm>
+#include <iostream>
 
 #include "Utils.h"
 #include "Allocator.h"
@@ -331,17 +332,18 @@ class KiwiChunk {
         }
     }
 
-    int print(){
+    /// Prints the queue and counts its elements, used for debugging and is not synchronized
+    unsigned int printAndCount(){
         element_t* e = unset_mark(begin_sentinel.next);
-        int x = 0;
+        int chunkCount = 0;
         while (e != &end_sentinel) {
-            printf("%d -> ", (int)e->key);
+            std::cout << reinterpret_cast<int>(e->key) << " -> ";
             e = unset_mark(e->next);
-            x++;
+            chunkCount++;
         }
 
-        printf("\\\t count = %d\n", x);
-        return x;
+        std::cout << "\\\t count = " << chunkCount << "\n";
+        return chunkCount;
     }
 };
 
@@ -679,21 +681,21 @@ class KiWiPQ {
         return false;
     }
 
-    int print(){
-        printf("\nprint pq:\n");
-
+    /// Prints the queue and counts its elements, used for debugging and is not synchronized
+    unsigned int printAndCount(){
+        std::cout << "\n pq state:\n";
         chunk_t* chunk = unset_mark(begin_sentinel.next);
-        int x = 0;
-        int y = 0;
+        int inChunkCount = 0;
+        int totalCount = 0;
         while (chunk != &end_sentinel) {
-            printf("(%d) ", x++);
-            y += chunk->print();
+            std::cout << "(" << inChunkCount++ << ")";
+            totalCount += chunk->printAndCount();
             chunk = unset_mark(chunk->next);
         }
-        printf("toatl count %d\n", y);
-        printf("\n-------------\n\n");
+        std::cout << "total count " << totalCount << "\n";
+        std::cout << "\n-------------\n\n";
 
-        return y;
+        return totalCount;
     }
 };
 

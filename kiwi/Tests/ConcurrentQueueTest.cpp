@@ -71,7 +71,7 @@ TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
         thread.join();
     }
 
-    EXPECT_EQ(total_inserted, getQueue().print());
+    EXPECT_EQ(total_inserted, getQueue().printAndCount());
     int prev = -1;
     for (auto i = 0; i < total_inserted; i++) {
         int curr;
