@@ -330,6 +330,19 @@ class KiwiChunk {
             return true;
         }
     }
+
+    int print(){
+        element_t* e = unset_mark(begin_sentinel.next);
+        int x = 0;
+        while (e != &end_sentinel) {
+            printf("%d -> ", (int)e->key);
+            e = unset_mark(e->next);
+            x++;
+        }
+
+        printf("\\\t count = %d\n", x);
+        return x;
+    }
 };
 
 #ifdef GALOIS
@@ -664,6 +677,23 @@ class KiWiPQ {
             chunk = unset_mark(chunk->next);
         }
         return false;
+    }
+
+    int print(){
+        printf("\nprint pq:\n");
+
+        chunk_t* chunk = unset_mark(begin_sentinel.next);
+        int x = 0;
+        int y = 0;
+        while (chunk != &end_sentinel) {
+            printf("(%d) ", x++);
+            y += chunk->print();
+            chunk = unset_mark(chunk->next);
+        }
+        printf("toatl count %d\n", y);
+        printf("\n-------------\n\n");
+
+        return y;
     }
 };
 
