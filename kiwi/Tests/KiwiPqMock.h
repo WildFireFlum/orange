@@ -6,6 +6,11 @@
 #define KIWI_KIWIPQMOCK_H
 
 #include "../kiwiqueue/Kiwi.inl"
+#ifndef __linux__
+#include "../lib/mingw-threading/thread.h"
+#else
+#include <thread>
+#endif
 
 template <typename Comparer, typename K, typename Allocator_t>
 class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {

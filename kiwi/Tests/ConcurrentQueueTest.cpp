@@ -33,7 +33,9 @@ protected:
     }
 
     std::thread spawnPoppingThread(unsigned int numOfPops) {
-        auto result = std::thread([this, numOfPops](){
+        auto result = std::thread([this, numOfPops]() {
+            // Try to make sure we don't pop first
+            std::this_thread::yield();
             for (unsigned int i = 0; i < numOfPops; i++) {
                 std::cout << "thread " << getThreadId() << " popping ";
                 int popped = -1;
@@ -87,7 +89,9 @@ TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
 
 TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
     const int numToPush = 1;
-    auto pushNumber = [this]() { getQueue().push(numToPush);};
+    auto pushNumber = [this]() {
+        getQueue().push(numToPush);
+    };
 
     // Fill a chunk with ones
     for (int i = 0; i < KIWI_CHUNK_SIZE; i++) {
@@ -109,6 +113,47 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
     // Make sure that all items were pushed
     EXPECT_GT(getQueue().getRebalanceCount(), 1);
     EXPECT_EQ(getQueue().getNumOfChunks(), 2);
-    std::cout << getQueue().getRebalanceCount();
+    std::cout << "Rebalance count: " << getQueue().getRebalanceCount() << "\n";
 }
 
+
+TEST_F(ConcurrentQueueTest, TestStressPushPop) {
+    const auto num_of_pushes = (KIWI_CHUNK_SIZE * 128) + 1;
+    const auto num_of_thread_pops = 512;
+    const auto num_of_popping_threads = numOfThreads * 0.75;
+    const auto num_of_pushing_threads = numOfThreads * 0.25;
+    // Make sure no duplicate values
+    const auto min_val = (num_of_pushes / numOfThreads) + 1;
+
+    auto total_inserted = 0;
+
+    std::vector<std::thread> threads;
+    for (auto i = 0; i < num_of_pushing_threads; i++) {
+        const auto to_insert = num_of_pushes / numOfThreads;
+        threads.push_back(spawnPushingThread(to_insert, min_val * i));
+        total_inserted += to_insert;
+    }
+
+    for (auto i = 0; i < num_of_popping_threads; i++) {
+        threads.push_back(spawnPoppingThread(num_of_thread_pops));
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Make sure that all items were pushed
+    EXPECT_EQ(total_inserted - num_of_thread_pops, getQueue().size());
+
+    // Make sure queue is sorted
+    auto prev = -1;
+    for (auto i = 0; i < total_inserted; i++) {
+        int curr;
+        EXPECT_TRUE(getQueue().try_pop(curr));
+        // Every item is inserted only once
+        EXPECT_GT(curr, prev);
+        prev = curr;
+    }
+    // validate the queue is empty
+    EXPECT_FALSE(getQueue().try_pop(prev));
+}
