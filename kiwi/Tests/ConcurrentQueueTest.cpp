@@ -56,7 +56,8 @@ int ConcurrentQueueTest::numOfThreads = 8;
 
 TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
     const auto num_of_pushes = (KIWI_CHUNK_SIZE * 64) + 1;
-    const auto min_val = 1337;
+    // Make sure no duplicate values
+    const auto min_val = (num_of_pushes / numOfThreads) + 1;
     auto total_inserted = 0;
 
     std::vector<std::thread> threads;
@@ -75,7 +76,7 @@ TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
     for (auto i = 0; i < total_inserted; i++) {
         int curr;
         EXPECT_TRUE(getQueue().try_pop(curr));
-        EXPECT_GE(curr, prev);
+        EXPECT_GT(curr, prev);
         prev = curr;
     }
     // validate the queue is empty
