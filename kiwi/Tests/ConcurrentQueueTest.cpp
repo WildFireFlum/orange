@@ -71,15 +71,44 @@ TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
         thread.join();
     }
 
+    // Make sure that all items were pushed
     EXPECT_EQ(total_inserted, getQueue().size());
     int prev = -1;
     for (auto i = 0; i < total_inserted; i++) {
         int curr;
         EXPECT_TRUE(getQueue().try_pop(curr));
+        // Every item is inserted only once
         EXPECT_GT(curr, prev);
         prev = curr;
     }
     // validate the queue is empty
     EXPECT_FALSE(getQueue().try_pop(prev));
+}
+
+TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
+    const int numToPush = 1;
+    auto pushNumber = [this]() { getQueue().push(numToPush);};
+
+    // Fill a chunk with ones
+    for (int i = 0; i < KIWI_CHUNK_SIZE; i++) {
+        getQueue().push(numToPush);
+    }
+    EXPECT_EQ(getQueue().getNumOfChunks(), 1);
+    EXPECT_EQ(getQueue().getRebalanceCount(), 0);
+
+
+    std::vector<std::thread> threads;
+    for (auto i = 0; i < numOfThreads; i++) {
+        threads.emplace_back(pushNumber);
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Make sure that all items were pushed
+    EXPECT_GT(getQueue().getRebalanceCount(), 1);
+    EXPECT_EQ(getQueue().getNumOfChunks(), 2);
+    std::cout << getQueue().getRebalanceCount();
 }
 

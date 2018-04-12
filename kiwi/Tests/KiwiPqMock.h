@@ -10,6 +10,7 @@
 template <typename Comparer, typename K, typename Allocator_t>
 class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
     using chunk_t = KiwiChunk<Comparer, K>;
+    using KiwiPQ = KiWiPQ<Comparer, K, Allocator_t>;
 
    public:
     KiwiPQMock(Allocator_t* alloc,
@@ -22,8 +23,21 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
                                            num_threads),
           num_of_rebalances(0) {}
 
-    unsigned int getRebalanceCount() {
-        return num_of_rebalances;
+    unsigned int getRebalanceCount() { return num_of_rebalances; }
+
+    /**
+     * Counts the number of chunks in the queue
+     * @note: Assumed to be run in a sequential manner
+     * @return The number of chunks in the queue
+     */
+    unsigned int getNumOfChunks() {
+        chunk_t* chunk = KiwiPQ::unset_mark(this->begin_sentinel.next);
+        int chunkCount = 0;
+        while (chunk != &this->end_sentinel) {
+            chunkCount++;
+            chunk = KiwiPQ::unset_mark(chunk->next);
+        }
+        return chunkCount;
     }
 
    protected:
