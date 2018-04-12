@@ -332,7 +332,8 @@ class KiwiChunk {
         }
     }
 
-    /// Prints the queue and counts its elements, used for debugging and is not synchronized
+    /// Prints the queue and counts its elements, used for debugging and is not synchronized,
+    /// TODO: remove
     unsigned int printAndCount(){
         element_t* e = unset_mark(begin_sentinel.next);
         int chunkCount = 0;
@@ -343,6 +344,21 @@ class KiwiChunk {
         }
 
         std::cout << "\\\t count = " << chunkCount << "\n";
+        return chunkCount;
+    }
+
+    /**
+     * Counts the number of elements in a chunk, not synchronized
+     * @note: Assumed to be run in a sequential manner
+     * @return The number of elements in a chunk
+     */
+    unsigned int size(){
+        element_t* e = unset_mark(begin_sentinel.next);
+        int chunkCount = 0;
+        while (e != &end_sentinel) {
+            e = unset_mark(e->next);
+            chunkCount++;
+        }
         return chunkCount;
     }
 };
@@ -682,6 +698,7 @@ class KiWiPQ {
     }
 
     /// Prints the queue and counts its elements, used for debugging and is not synchronized
+    /// TODO: remove
     unsigned int printAndCount(){
         std::cout << "\n pq state:\n";
         chunk_t* chunk = unset_mark(begin_sentinel.next);
@@ -694,6 +711,24 @@ class KiWiPQ {
         }
         std::cout << "total count " << totalCount << "\n";
         std::cout << "\n-------------\n\n";
+
+        return totalCount;
+    }
+
+
+    /**
+     * Counts the number of elements in the queue
+     * @note: Assumed to be run in a sequential manner
+     * @return The number of elements in a chunk
+     */
+    unsigned int size(){
+        chunk_t* chunk = unset_mark(begin_sentinel.next);
+        int inChunkCount = 0;
+        int totalCount = 0;
+        while (chunk != &end_sentinel) {
+            totalCount += chunk->size();
+            chunk = unset_mark(chunk->next);
+        }
 
         return totalCount;
     }
