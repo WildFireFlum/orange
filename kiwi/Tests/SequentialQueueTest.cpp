@@ -7,7 +7,7 @@ class SequentialQueueTest : public QueueTest {
 
     virtual void SetUp() {
         m_allocator = new MockAllocator();
-        m_pq = new kiwipq_t(m_allocator, 0, 13371337, 1);
+        m_pq = new kiwipq_t(m_allocator, -13371337, 13371337, 1);
     }
 };
 
