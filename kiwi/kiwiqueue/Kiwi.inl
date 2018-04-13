@@ -438,11 +438,14 @@ class KiWiPQ {
     }
 
     virtual void rebalance(chunk_t* chunk) {
+
+        // Consensus on a rebalance object for this chunk
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
         }
         rebalance_object_t* ro = chunk->ro;
+
         volatile chunk_t* last = chunk;
         while (true) {
             volatile chunk_t* next = unset_mark(ro->next);
@@ -504,10 +507,10 @@ class KiWiPQ {
                     // TODO: delete it as soon as we use index again
                     Cn->status = NORMAL_CHUNK;
                 }
-                uint32_t i = Cn->i;
+                volatile uint32_t& i = Cn->i;
                 Cn->k[i].key = arr[j];
                 Cn->k[i].next = &(Cn->k[i + 1]);
-                Cn->i++;
+                i++;
             }
         } while ((c != last) && (c = unset_mark(c->next)));
 
