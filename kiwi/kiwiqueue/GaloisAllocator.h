@@ -26,7 +26,7 @@ public:
 
     void reclaim(void* ptr, unsigned int listIndex) {
         int e = (term.getEpoch() + 2) % 3;
-        //TODO heap[e].deallocate(ptr, listIndex);
+        heap[e].deallocate(ptr, listIndex);
     }
 
 private:

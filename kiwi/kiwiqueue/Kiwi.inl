@@ -38,7 +38,11 @@ enum PPA_MASK {
  */
 template <class Comparer, typename K>
 class KiWiRebalancedObject {
-   public:
+public:// dummy field which is used by the heap when the node is freed.
+    // (without it, freeing a node would corrupt a field, possibly affecting
+    // a concurrent traversal.)
+    void* dummy;
+
     KiwiChunk<Comparer, K>* first;
     KiwiChunk<Comparer, K>* volatile next;
 
