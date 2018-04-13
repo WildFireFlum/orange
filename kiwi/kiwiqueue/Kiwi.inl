@@ -486,7 +486,7 @@ class KiWiPQ {
                 reclaim_chunk(chunk);
                 return true;
             }
-            func(pred);
+            // func(pred);
 
             if (loop_count1++ == max_iter) {
                 printf("thread id %d, loop %d\n", getThreadId(), 2);
@@ -505,9 +505,9 @@ class KiWiPQ {
 
     virtual void rebalance(chunk_t* chunk) {
         // TODO tmp
-        if (func(chunk)) {
-            return;
-        }
+        // if (func(chunk)) {
+        //     return;
+        // }
         // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
@@ -533,6 +533,9 @@ class KiWiPQ {
                 ATOMIC_CAS_MB(&(ro->next), next, nullptr);
             }
         }
+
+        if (ro->first != chunk || ro->next != nullptr || last != chunk)
+            printf("what.....???? \n");
 
         // search for last concurrently engaged chunk
         while (unset_mark(last->next) != nullptr &&
@@ -603,8 +606,11 @@ class KiWiPQ {
                                 set_mark(c)));
 
         if(!is_empty) {
-            Cn->next = c;
+            Cn->next = unset_mark(c);
         }
+
+        uint64_t max_iter = 1 << 24;
+        int loop_count1 = 0;
 
         do {
             //TODO: should validate this part ...
@@ -643,11 +649,21 @@ class KiWiPQ {
                 return;
             }
 
-            // insertion failed, help predecessor and retry
-            if (pred->ro != nullptr) {
-                // TODO: ...
-                rebalance(pred);
+            if (loop_count1++ == max_iter) {
+                printf("thread id %d, loop %d\n", getThreadId());
+                printf("chunk         %p\n", chunk);
+                printf("chunk status  %d\n", chunk->status);
+                printf("chunk next    %p\n", chunk->next);
+                printf("pred          %p\n", pred);
+                printf("pred status   %d\n", pred->status);
+                printf("pred next     %p\n", pred->next);
+
+                printf("---------------------------------------------\n\n");
             }
+
+            // insertion failed, help predecessor and retry
+            //TODO: // rebalance(pred);
+
         } while (true);
     }
 
