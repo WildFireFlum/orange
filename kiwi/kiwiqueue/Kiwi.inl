@@ -397,8 +397,7 @@ class KiWiPQ {
 
     chunk_t* new_chunk() {
         // Second argument is an index of a freelist to use to reclaim
-        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(
-            sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
+        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
         chunk->init(num_of_threads);
         return chunk;
     }
@@ -488,14 +487,10 @@ class KiWiPQ {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
 
-                    Cn->min_key = Cn->k[0].key;  // set Cn min key - this value
-                                                 // won't be change
-                    Cn->begin_sentinel.next =
-                        &Cn->k[0];  // connect begin sentinel to the list
-                    Cn->k[Cn->i - 1].next =
-                        &(Cn->end_sentinel);  // close the list by point the
-                                              // last key to the end sentinel
-
+                    Cn->min_key = Cn->k[0].key;                   // set Cn min key - this value won't be change
+                    Cn->begin_sentinel.next = &Cn->k[0];          // connect begin sentinel to the list
+                    Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by point the last
+                                                                  // key to the end sentinel
                     Cn->next = new_chunk();  // create a new chunk and set
                                              // Cn->next points to it
                     Cn = Cn->next;           // Cn points to the new chunk
@@ -516,13 +511,9 @@ class KiWiPQ {
 
         if (Cn->i > 0) {
             // we need to close the last chunk as well
-            Cn->min_key =
-                Cn->k[0].key;  // set Cn min key - this value won't be change
-            Cn->begin_sentinel.next =
-                &Cn->k[0];  // connect begin sentinel to the list
-            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by
-                                                          // point the last key
-                                                          // to the end sentinel
+            Cn->min_key = Cn->k[0].key;                     // set Cn min key - this value won't be change
+            Cn->begin_sentinel.next = &Cn->k[0];            // connect begin sentinel to the list
+            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);    // close the list by point the last key to the end sentinel
         } else {
             // all the chunks in ro are empty
             delete_chunk(Cn);
@@ -547,9 +538,7 @@ class KiWiPQ {
                 c = Cf;
             }
 
-            if (pred != nullptr &&
-                ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first),
-                              unset_mark(c))) {
+            if (pred != nullptr && ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
                 // success - normalize chunk and free old chunks
                 // normalize(chunk);
 
@@ -580,7 +569,9 @@ class KiWiPQ {
             }
 
             // insertion failed, help predecessor and retry
-            rebalance(pred);
+            if (pred != &begin_sentinel) {
+                rebalance(pred);
+            }
 
         } while (true);
     }
