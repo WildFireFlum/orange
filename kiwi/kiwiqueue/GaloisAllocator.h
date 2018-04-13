@@ -20,16 +20,23 @@ public:
     }
 
     void deallocate(void* ptr, unsigned int listIndex) {
-        int e = (term.getEpoch() + 2) % 3;
+        int e = term.getEpoch();
         heap[e].deallocate(ptr, listIndex);
+    }
+
+    void reclaim(void* ptr, unsigned int listIndex) {
+        int e = (term.getEpoch() + 2) % 3;
+        //TODO heap[e].deallocate(ptr, listIndex);
     }
 
 private:
     // memory reclamation mechanism
-    Runtime::MM::ListNodeHeap heap[3];
+    static Runtime::MM::ListNodeHeap heap[3];
     Runtime::TerminationDetection& term;
 
 };
+
+Runtime::MM::ListNodeHeap GaloisAllocator::heap[3];
 
 
 #endif //KIWI_GALOISALLOCATOR_H

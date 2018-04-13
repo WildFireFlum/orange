@@ -13,6 +13,8 @@ public:
     virtual void* allocate(unsigned int numOfBytes, unsigned int listIndex) = 0;
 
     virtual void deallocate(void *ptr, unsigned int listIndex) = 0;
+
+    virtual void reclaim(void *ptr, unsigned int listIndex) = 0;
 };
 
 

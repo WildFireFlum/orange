@@ -333,14 +333,14 @@ class KiwiChunk {
     /// TODO: remove
     unsigned int printAndCount() {
         element_t* e = unset_mark(begin_sentinel.next);
-        int chunkCount = 0;
+        unsigned int chunkCount = 0;
         while (e != &end_sentinel) {
             std::cout << reinterpret_cast<int>(e->key) << " -> ";
             e = unset_mark(e->next);
             chunkCount++;
         }
 
-        std::cout << "\\\t count = " << chunkCount << "\n";
+        std::cout << "\\\n count = " << chunkCount << "\n";
         return chunkCount;
     }
 
@@ -351,7 +351,7 @@ class KiwiChunk {
      */
     unsigned int size() {
         element_t* e = unset_mark(begin_sentinel.next);
-        int chunkCount = 0;
+        unsigned int chunkCount = 0;
         while (e != &end_sentinel) {
             e = unset_mark(e->next);
             chunkCount++;
@@ -397,11 +397,12 @@ class KiWiPQ {
 
     chunk_t* new_chunk() {
         // Second argument is an index of a freelist to use to reclaim
-        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(
-            sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
+        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
         chunk->init(num_of_threads);
         return chunk;
     }
+
+    void reclaim_chunk(chunk_t* chunk) { allocator->reclaim(chunk, 0); }
 
     void delete_chunk(chunk_t* chunk) { allocator->deallocate(chunk, 0); }
 
@@ -412,7 +413,9 @@ class KiWiPQ {
         return ro;
     }
 
-    void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1); }
+    void reclaim_ro(rebalance_object_t* ro) { allocator->reclaim(ro, 1); }
+
+    void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1);}
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
@@ -431,7 +434,6 @@ class KiWiPQ {
     }
 
     virtual void rebalance(chunk_t* chunk) {
-        // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
@@ -485,14 +487,10 @@ class KiWiPQ {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
 
-                    Cn->min_key = Cn->k[0].key;  // set Cn min key - this value
-                                                 // won't be change
-                    Cn->begin_sentinel.next =
-                        &Cn->k[0];  // connect begin sentinel to the list
-                    Cn->k[Cn->i - 1].next =
-                        &(Cn->end_sentinel);  // close the list by point the
-                                              // last key to the end sentinel
-
+                    Cn->min_key = Cn->k[0].key;                   // set Cn min key - this value won't be change
+                    Cn->begin_sentinel.next = &Cn->k[0];          // connect begin sentinel to the list
+                    Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by point the last
+                                                                  // key to the end sentinel
                     Cn->next = new_chunk();  // create a new chunk and set
                                              // Cn->next points to it
                     Cn = Cn->next;           // Cn points to the new chunk
@@ -513,13 +511,9 @@ class KiWiPQ {
 
         if (Cn->i > 0) {
             // we need to close the last chunk as well
-            Cn->min_key =
-                Cn->k[0].key;  // set Cn min key - this value won't be change
-            Cn->begin_sentinel.next =
-                &Cn->k[0];  // connect begin sentinel to the list
-            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by
-                                                          // point the last key
-                                                          // to the end sentinel
+            Cn->min_key = Cn->k[0].key;                     // set Cn min key - this value won't be change
+            Cn->begin_sentinel.next = &Cn->k[0];            // connect begin sentinel to the list
+            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);    // close the list by point the last key to the end sentinel
         } else {
             // all the chunks in ro are empty
             delete_chunk(Cn);
@@ -533,8 +527,8 @@ class KiWiPQ {
         } while (!is_marked(c) &&
                  !ATOMIC_CAS_MB(&(last->next), unset_mark(c), set_mark(c)));
 
-        if (!is_empty) {
-            Cn->next = c;
+        if(!is_empty) {
+            Cn->next = unset_mark(c);
         }
 
         do {
@@ -544,9 +538,7 @@ class KiWiPQ {
                 c = Cf;
             }
 
-            if (pred != nullptr &&
-                ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first),
-                              unset_mark(c))) {
+            if (pred != nullptr && ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
                 // success - normalize chunk and free old chunks
                 // normalize(chunk);
 
@@ -554,10 +546,10 @@ class KiWiPQ {
                 chunk_t* next;
                 do {
                     next = unset_mark(curr->next);
-                    delete_chunk(curr);
+                    reclaim_chunk(curr);
                 } while ((curr != last) && (curr = next));
 
-                delete_ro(ro);
+                reclaim_ro(ro);
                 return;
             }
 
@@ -577,10 +569,10 @@ class KiWiPQ {
             }
 
             // insertion failed, help predecessor and retry
-            if (pred->ro != nullptr) {
-                // TODO: ...
+            if (pred != &begin_sentinel) {
                 rebalance(pred);
             }
+
         } while (true);
     }
 
@@ -721,9 +713,9 @@ class KiWiPQ {
         std::cout << "\n pq state:\n";
         chunk_t* chunk = unset_mark(begin_sentinel.next);
         int inChunkCount = 0;
-        int totalCount = 0;
+        unsigned int totalCount = 0;
         while (chunk != &end_sentinel) {
-            std::cout << "(" << inChunkCount++ << ")";
+            std::cout << "(" << inChunkCount++ << " - " << chunk << " ) ";
             totalCount += chunk->printAndCount();
             chunk = unset_mark(chunk->next);
         }
@@ -741,7 +733,7 @@ class KiWiPQ {
     unsigned int size() {
         chunk_t* chunk = unset_mark(begin_sentinel.next);
         int inChunkCount = 0;
-        int totalCount = 0;
+        unsigned int totalCount = 0;
         while (chunk != &end_sentinel) {
             totalCount += chunk->size();
             chunk = unset_mark(chunk->next);
