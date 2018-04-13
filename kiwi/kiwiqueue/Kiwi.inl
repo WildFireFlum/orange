@@ -30,6 +30,21 @@ enum PPA_MASK {
     FROZEN = 1 << 31,
 };
 
+template <typename T>
+bool is_marked(T* j) {
+    return ((uintptr_t)j & (uintptr_t)0x01) != 0;
+}
+
+template <typename T>
+T* unset_mark(T* j) {
+    return reinterpret_cast<T*>((uintptr_t)j & ~(uintptr_t)0x01);
+}
+
+template <typename T>
+T* set_mark(T* j) {
+    return reinterpret_cast<T*>((uintptr_t)j | (uintptr_t)0x01);
+}
+
 /**
  * A node in a list of chunks which are going to be rebalanced
  * used to synchronize the executions of rebalance
@@ -38,7 +53,7 @@ enum PPA_MASK {
  */
 template <class Comparer, typename K>
 class KiWiRebalancedObject {
-public:// dummy field which is used by the heap when the node is freed.
+   public:  // dummy field which is used by the heap when the node is freed.
     // (without it, freeing a node would corrupt a field, possibly affecting
     // a concurrent traversal.)
     void* dummy;
@@ -102,18 +117,6 @@ class KiwiChunk {
     /// the number of threads in the system (see new_chunk() in KiWiPQ)
     uint32_t ppa_len;
     uint32_t volatile ppa[0];
-
-    static bool is_marked(element_t* j) {
-        return ((uintptr_t)j & (uintptr_t)0x01) != 0;
-    }
-
-    static element_t* unset_mark(element_t* j) {
-        return reinterpret_cast<element_t*>((uintptr_t)j & ~(uintptr_t)0x01);
-    }
-
-    static element_t* set_mark(element_t* j) {
-        return reinterpret_cast<element_t*>((uintptr_t)j | (uintptr_t)0x01);
-    }
 
     void init(unsigned int num_threads) {
         // Used for debugging
@@ -387,21 +390,10 @@ class KiWiPQ {
     chunk_t end_sentinel;
     // LockFreeSkipListSet<Comparer, K, chunk_t*> index;
 
-    static bool is_marked(chunk_t* j) {
-        return ((uintptr_t)j & (uintptr_t)0x01) != 0;
-    }
-
-    static chunk_t* unset_mark(chunk_t* j) {
-        return reinterpret_cast<chunk_t*>((uintptr_t)j & ~(uintptr_t)0x01);
-    }
-
-    static chunk_t* set_mark(chunk_t* j) {
-        return reinterpret_cast<chunk_t*>((uintptr_t)j | (uintptr_t)0x01);
-    }
-
     chunk_t* new_chunk() {
         // Second argument is an index of a freelist to use to reclaim
-        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
+        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(
+            sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
         chunk->init(num_of_threads);
         return chunk;
     }
@@ -419,7 +411,7 @@ class KiWiPQ {
 
     void reclaim_ro(rebalance_object_t* ro) { allocator->reclaim(ro, 1); }
 
-    void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1);}
+    void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1); }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
@@ -438,7 +430,6 @@ class KiWiPQ {
     }
 
     virtual void rebalance(chunk_t* chunk) {
-
         // Consensus on a rebalance object for this chunk
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
@@ -494,15 +485,18 @@ class KiWiPQ {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
 
-                    Cn->min_key = Cn->k[0].key;                   // set Cn min key - this value won't be change
-                    Cn->begin_sentinel.next = &Cn->k[0];          // connect begin sentinel to the list
-                    Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by point the last
-                                                                  // key to the end sentinel
+                    Cn->min_key = Cn->k[0].key;  // set Cn min key - this value
+                                                 // won't be change
+                    Cn->begin_sentinel.next =
+                        &Cn->k[0];  // connect begin sentinel to the list
+                    Cn->k[Cn->i - 1].next = &(
+                        Cn->end_sentinel);   // close the list by point the last
+                                             // key to the end sentinel
                     Cn->next = new_chunk();  // create a new chunk and set
                                              // Cn->next points to it
                     Cn = Cn->next;           // Cn points to the new chunk
-                    Cn->parent = chunk;      // set chunk as rebalance parent of the
-                                             // new chunk
+                    Cn->parent = chunk;  // set chunk as rebalance parent of the
+                                         // new chunk
 
                     // TODO: delete it as soon as we use index again
                     Cn->status = NORMAL_CHUNK;
@@ -518,9 +512,13 @@ class KiWiPQ {
 
         if (Cn->i > 0) {
             // we need to close the last chunk as well
-            Cn->min_key = Cn->k[0].key;                     // set Cn min key - this value won't be change
-            Cn->begin_sentinel.next = &Cn->k[0];            // connect begin sentinel to the list
-            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);    // close the list by point the last key to the end sentinel
+            Cn->min_key =
+                Cn->k[0].key;  // set Cn min key - this value won't be change
+            Cn->begin_sentinel.next =
+                &Cn->k[0];  // connect begin sentinel to the list
+            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by
+                                                          // point the last key
+                                                          // to the end sentinel
         } else {
             // all the chunks in ro are empty
             delete_chunk(Cn);
@@ -534,7 +532,7 @@ class KiWiPQ {
         } while (!is_marked(c) &&
                  !ATOMIC_CAS_MB(&(last->next), unset_mark(c), set_mark(c)));
 
-        if(!is_empty) {
+        if (!is_empty) {
             Cn->next = unset_mark(c);
         }
 
@@ -545,7 +543,9 @@ class KiWiPQ {
                 c = Cf;
             }
 
-            if (pred != nullptr && ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
+            if (pred != nullptr &&
+                ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first),
+                              unset_mark(c))) {
                 // success - normalize chunk and free old chunks
                 // normalize(chunk);
 
