@@ -31,12 +31,10 @@ public:
 
 private:
     // memory reclamation mechanism
-    static Runtime::MM::ListNodeHeap heap[3];
+    Runtime::MM::ListNodeHeap heap[3];
     Runtime::TerminationDetection& term;
 
 };
-
-Runtime::MM::ListNodeHeap GaloisAllocator::heap[3];
 
 
 #endif //KIWI_GALOISALLOCATOR_H

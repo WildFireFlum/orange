@@ -31,8 +31,7 @@ enum PPA_MASK {
 };
 
 /**
- * A node in a list of chunks which are going to be rebalanced
- * used to synchronize the executions of rebalance
+ * The f
  * @tparam Comparer - Compares keys
  * @tparam K
  */
@@ -43,8 +42,8 @@ public:// dummy field which is used by the heap when the node is freed.
     // a concurrent traversal.)
     void* dummy;
 
-    KiwiChunk<Comparer, K>* first;
-    KiwiChunk<Comparer, K>* volatile next;
+    KiwiChunk<Comparer, K>* volatile first; // the first chunk share this object
+    KiwiChunk<Comparer, K>* volatile next;  // next potential chunk - nullptr when the engagement stage is over
 
     void init(KiwiChunk<Comparer, K>* f, KiwiChunk<Comparer, K>* n) {
         first = f;
@@ -438,6 +437,7 @@ class KiWiPQ {
     }
 
     virtual void rebalance(chunk_t* chunk) {
+        // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
@@ -445,12 +445,12 @@ class KiWiPQ {
         rebalance_object_t* ro = chunk->ro;
         volatile chunk_t* last = chunk;
         while (true) {
-            volatile chunk_t* next = unset_mark(ro->next);
-            if (next == nullptr) {
+            chunk_t* next = unset_mark(ro->next);
+            if (next == nullptr || next == &end_sentinel) {
                 break;
             }
             if (policy(next)) {
-                ATOMIC_CAS_MB(&next, nullptr, ro);
+                ATOMIC_CAS_MB(&(next->ro), nullptr, ro);
 
                 if (next->ro == ro) {
                     ATOMIC_CAS_MB(&(ro->next), next, unset_mark(next->next));
@@ -464,8 +464,7 @@ class KiWiPQ {
         }
 
         // search for last concurrently engaged chunk
-        while (unset_mark(last->next) != nullptr &&
-               unset_mark(last->next)->ro == ro) {
+        while (unset_mark(last->next)->ro == ro) {
             last = unset_mark(last->next);
         }
 
@@ -498,7 +497,7 @@ class KiWiPQ {
                     Cn->next = new_chunk();  // create a new chunk and set
                                              // Cn->next points to it
                     Cn = Cn->next;           // Cn points to the new chunk
-                    Cn->parent = chunk;      // set chunk as rebalance parent of the
+                    Cn->parent = ro->first;  // set chunk as rebalance parent of the
                                              // new chunk
 
                     // TODO: delete it as soon as we use index again
@@ -538,14 +537,29 @@ class KiWiPQ {
         do {
             // TODO: should validate this part ...
             chunk_t* pred = load_prev(ro->first);
+
+            if (pred == nullptr) {
+                // ro-> first is not accessible - someone else succeeded - delete the chunks we just created and return
+                if (!is_empty) {
+                    chunk_t* curr = Cf;
+                    chunk_t* next;
+                    do {
+                        next = unset_mark(curr->next);
+                        delete_chunk(curr);
+                    } while ((curr != Cn) && (curr = next));
+                }
+
+                // we can help normalize here if we want
+                return;
+            }
+
             if (!is_empty) {
                 c = Cf;
             }
 
-            if (pred != nullptr && ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
-                // success - normalize chunk and free old chunks
-                // normalize(chunk);
-
+            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
+                // success - normalize chunk and free old chunks and normalize
+                // normalize
                 chunk_t* curr = ro->first;
                 chunk_t* next;
                 do {
@@ -557,23 +571,8 @@ class KiWiPQ {
                 return;
             }
 
-            if (pred == nullptr || unset_mark(pred->next)->parent == chunk) {
-                // someone else succeeded - delete the chunks we just created
-                // and normalize
-                if (!is_empty) {
-                    chunk_t* curr = Cf;
-                    chunk_t* next;
-                    do {
-                        next = unset_mark(curr->next);
-                        delete_chunk(curr);
-                    } while ((curr != Cn) && (curr = next));
-                }
-                // normalize(chunk);
-                return;
-            }
-
-            // insertion failed, help predecessor and retry
-            if (pred != &begin_sentinel) {
+            if (pred->status == FROZEN_CHUNK && unset_mark(pred->next) == ro->first) {
+                // the predecessor is being rebalanced - help it and retry
                 rebalance(pred);
             }
 
@@ -615,12 +614,13 @@ class KiWiPQ {
         // TODO: should use index instead of traversing the list
         chunk_t* prev = &begin_sentinel;
         chunk_t* curr = unset_mark(prev->next);
-        while (curr != &end_sentinel && curr != chunk) {
+
+        while (curr != chunk && curr != &end_sentinel && !compare(chunk->min_key, curr->min_key)) {
             prev = curr;
             curr = unset_mark(prev->next);
         }
 
-        if (curr == &end_sentinel) {
+        if (curr != chunk) {
             return nullptr;
         }
 
