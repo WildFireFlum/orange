@@ -18,7 +18,7 @@ class ConcurrentQueueTest : public QueueTest {
 
     virtual void SetUp() {
         m_allocator = new MockAllocator();
-        m_pq = new kiwipq_t(m_allocator, 0, 13371337, numOfThreads);
+        m_pq = new kiwipq_t(m_allocator, -13371337, 13371337, numOfThreads);
     }
 
    protected:
@@ -123,13 +123,10 @@ TEST_F(ConcurrentQueueTest, TestStressPushPop) {
     // Make sure no duplicate values
     const auto min_val = (num_of_pushes / num_of_pushing_threads) + 1;
 
-    auto total_inserted = 0;
-
     std::vector<std::thread> threads;
     for (auto i = 0; i < num_of_pushing_threads; i++) {
         const auto to_insert = num_of_pushes / num_of_pushing_threads;
         threads.push_back(spawnPushingThread(to_insert, min_val * i));
-        total_inserted += to_insert;
     }
 
     for (auto i = 0; i < num_of_popping_threads; i++) {
@@ -142,9 +139,9 @@ TEST_F(ConcurrentQueueTest, TestStressPushPop) {
 
     const auto queueFinalSize = getQueue().size();
     // Make sure that all items were pushed
-    EXPECT_EQ(total_inserted - num_of_pops, queueFinalSize);
+    EXPECT_EQ(num_of_pushes - num_of_pops, queueFinalSize);
 
-    
+
     // Make sure queue is sorted
     auto prev = -1;
     for (auto i = 0; i < queueFinalSize; i++) {
