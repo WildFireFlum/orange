@@ -339,7 +339,7 @@ class KiwiChunk {
             e = unset_mark(e->next);
             x++;
         }
-        printf("\\\t count = %d\n", x);
+        printf("\\\ncount = %d\n", x);
         return x;
     }
 };
@@ -461,7 +461,7 @@ class KiWiPQ {
         }
 
         chunk_t* next;
-        uint64_t max_iter = 1 << 28;
+        uint64_t max_iter = 1 << 24;
         int loop_count1 = 0;
         do {
             next = chunk->next;
@@ -486,7 +486,19 @@ class KiWiPQ {
                 reclaim_chunk(chunk);
                 return true;
             }
-            if (loop_count1++ == max_iter) printf("thread id % d, loop %d\n", getThreadId(), 2);
+            func(pred);
+
+            if (loop_count1++ == max_iter) {
+                printf("thread id %d, loop %d\n", getThreadId(), 2);
+                printf("chunk         %p\n", chunk);
+                printf("chunk status  %d\n", chunk->status);
+                printf("chunk next    %p\n", chunk->next);
+                printf("pred          %p\n", pred);
+                printf("pred status   %d\n", pred->status);
+                printf("pred next     %p\n", pred->next);
+
+                printf("---------------------------------------------\n\n");
+            }
         } while (true);
 
     }
@@ -766,11 +778,11 @@ class KiWiPQ {
         int x = 0;
         int y = 0;
         while (chunk != &end_sentinel) {
-            printf("(%d) ", x++);
+            printf("(%d) %p\n", x++, chunk);
             y += chunk->print();
             chunk = unset_mark(chunk->next);
         }
-        printf("toatl count %d\n", y);
+        printf("total count %d\n", y);
         printf("\n-------------\n\n");
 
         return y;
