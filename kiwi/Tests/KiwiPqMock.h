@@ -36,11 +36,11 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
      * @return The number of chunks in the queue
      */
     unsigned int getNumOfChunks() {
-        chunk_t* chunk = KiwiPQ::unset_mark(this->begin_sentinel.next);
+        chunk_t* chunk = unset_mark(this->begin_sentinel.next);
         int chunkCount = 0;
         while (chunk != &this->end_sentinel) {
             chunkCount++;
-            chunk = KiwiPQ::unset_mark(chunk->next);
+            chunk = unset_mark(chunk->next);
         }
         return chunkCount;
     }
