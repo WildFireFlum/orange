@@ -25,8 +25,8 @@ class ConcurrentQueueTest : public QueueTest {
     std::thread spawnPushingThread(unsigned int numOfInsertions, int min_val) {
         auto result = std::thread([this, numOfInsertions, min_val]() {
             for (unsigned int i = min_val; i < numOfInsertions + min_val; i++) {
-                std::cout << "thread " << getThreadId() << " pushing " << i
-                          << "\n";
+                /*std::cout << "thread " << getThreadId() << " pushing " << i
+                          << "\n";*/
                 m_pq->push(i);
             }
         });
@@ -39,15 +39,15 @@ class ConcurrentQueueTest : public QueueTest {
             std::this_thread::yield();
             unsigned int popCount = 0;
             while (popCount < numOfPops) {
-                std::cout << "thread " << getThreadId() << " popping ";
+                //std::cout << "thread " << getThreadId() << " popping ";
                 int popped = -1;
                 if (m_pq->try_pop(popped)) {
-                    std::cout << "value " << popped << "\n";
+                    //std::cout << "value " << popped << "\n";
                     EXPECT_NE(popped, -1);
                     popped = -1;
                     popCount++;
                 } else {
-                    std::cout << "nothing, pop failed\n";
+                    //std::cout << "nothing, pop failed\n";
                 }
             }
         });
@@ -115,7 +115,7 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
 }
 
 TEST_F(ConcurrentQueueTest, TestStressPushPop) {
-    const auto num_of_pushes = KIWI_CHUNK_SIZE * 1024;
+    const auto num_of_pushes = KIWI_CHUNK_SIZE * 128;
     const auto num_of_pops = KIWI_CHUNK_SIZE * 64;
     const auto num_of_popping_threads = numOfThreads * 0.50;
     const auto num_of_pushing_threads = numOfThreads * 0.50;

@@ -233,7 +233,7 @@ class KiwiChunk {
     }
 
     // TODO: should be improved
-    uint32_t get_keys(K (&arr)[KIWI_CHUNK_SIZE]) {
+    uint32_t get_keys_to_preserve_from_chunk(K (&arr)[KIWI_CHUNK_SIZE]) {
         if (status != FROZEN_CHUNK) {
             // invalid call
             return 0;
@@ -485,7 +485,7 @@ class KiWiPQ {
 
         do {
             K arr[KIWI_CHUNK_SIZE];
-            uint32_t count = c->get_keys(arr);
+            uint32_t count = c->get_keys_to_preserve_from_chunk(arr);
             std::sort(arr, arr + count, compare);
             for (uint32_t j = 0; j < count; j++) {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
