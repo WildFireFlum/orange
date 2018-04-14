@@ -133,9 +133,10 @@ class KiwiChunk {
             ppa[j] = IDLE;
         }
 
-        // initialize next pointers of all elements
+        // initialize the elements struct
         for (int j = 0; j < KIWI_CHUNK_SIZE; j++) {
             k[j].next = UNINITIALIZED;
+            k[j].deleted = false;
         }
     }
 
