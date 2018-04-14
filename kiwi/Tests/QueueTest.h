@@ -6,8 +6,11 @@
 #define KIWI_QUEUETEST_H
 
 #include <gtest/gtest.h>
+#include <memory>
 #include "KiwiPqMock.h"
 #include "../kiwiqueue/MockAllocator.h"
+
+extern MockAllocator s_allocator;
 
 template <typename T>
 class MockComparer {
@@ -19,18 +22,17 @@ using kiwipq_t = KiwiPQMock<MockComparer<int>, int, MockAllocator>;
 
 class QueueTest : public testing::Test {
 public:
-    QueueTest() : m_allocator(nullptr), m_pq(nullptr) {}
+    QueueTest();
 
-    virtual void TearDown() {
-        delete m_allocator;
-        delete m_pq;
-        nextID = 0;
-    }
+    virtual void SetUp();
+
+    virtual void TearDown();
+
+    virtual ~QueueTest() = default;
 
 protected:
-    kiwipq_t& getQueue() { return *m_pq; }
-    MockAllocator* m_allocator;
-    kiwipq_t* m_pq;
+    kiwipq_t& getQueue();
+    std::unique_ptr<kiwipq_t> m_pq;
 };
 
 #endif //KIWI_QUEUETEST_H

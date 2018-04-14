@@ -52,6 +52,13 @@ public:
         return m_chunk_allocations;
     }
 
+    void clear() {
+        m_offset = 0;
+        m_chunk_allocations = 0;
+        m_ro_allocations = 0;
+        memset(m_buf, 0, MOCK_ALLOC_SIZE);
+    }
+
     char *m_buf;
     volatile unsigned int m_offset;
     volatile unsigned int m_chunk_allocations;

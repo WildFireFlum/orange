@@ -17,8 +17,8 @@ class ConcurrentQueueTest : public QueueTest {
     static int numOfThreads;
 
     virtual void SetUp() {
-        m_allocator = new MockAllocator();
-        m_pq = new kiwipq_t(m_allocator, -13371337, 13371337, numOfThreads);
+        QueueTest::SetUp();
+        m_pq.reset(new kiwipq_t(&s_allocator, -13371337, 13371337, numOfThreads));
     }
 
    protected:
