@@ -120,9 +120,10 @@ class KiwiChunk {
     void init(unsigned int num_threads) {
         // Used for debugging
         element_t* const UNINITIALIZED =
-            reinterpret_cast<element_t* const>(0xdeadf00d);
+            reinterpret_cast<element_t* const>(0xdeadf00d & (~1)) ;
         begin_sentinel.next = unset_mark(&end_sentinel);
-        end_sentinel.next = UNINITIALIZED + 1;
+        // The next of end_sentinel must not have its LSB on, otherwise find is not correct
+        end_sentinel.next = reinterpret_cast<element_t* const>(0xedde0000);
         status = INFANT_CHUNK;
         ppa_len = num_threads;
         this->i = 0;
