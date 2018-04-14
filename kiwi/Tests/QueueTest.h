@@ -24,6 +24,7 @@ public:
     virtual void TearDown() {
         delete m_allocator;
         delete m_pq;
+        nextID = 0;
     }
 
 protected:

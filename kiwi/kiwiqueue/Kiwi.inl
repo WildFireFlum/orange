@@ -7,7 +7,7 @@
 #include "Allocator.h"
 #include "Utils.h"
 
-#define KIWI_CHUNK_SIZE 1024
+#define KIWI_CHUNK_SIZE 256
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
 #define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
 
@@ -122,7 +122,7 @@ class KiwiChunk {
         element_t* const UNINITIALIZED =
             reinterpret_cast<element_t* const>(0xdeadf00d);
         begin_sentinel.next = unset_mark(&end_sentinel);
-        end_sentinel.next = nullptr;
+        end_sentinel.next = UNINITIALIZED + 1;
         status = INFANT_CHUNK;
         ppa_len = num_threads;
         this->i = 0;
@@ -432,7 +432,7 @@ class KiWiPQ {
         // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
-            delete_ro(tmp);
+            reclaim_ro(tmp);
         }
         rebalance_object_t* ro = chunk->ro;
 
@@ -520,7 +520,7 @@ class KiWiPQ {
                                                           // to the end sentinel
         } else {
             // all the chunks in ro are empty
-            delete_chunk(Cn);
+            reclaim_chunk(Cn);
             Cf = Cn = nullptr;
             is_empty = true;
         }
@@ -546,7 +546,7 @@ class KiWiPQ {
                     chunk_t* next;
                     do {
                         next = unset_mark(curr->next);
-                        delete_chunk(curr);
+                        reclaim_chunk(curr);
                     } while ((curr != Cn) && (curr = next));
                 }
 
@@ -593,7 +593,7 @@ class KiWiPQ {
             if (!ATOMIC_CAS_MB(&(begin_sentinel.next),
                                unset_mark(&end_sentinel), unset_mark(chunk))) {
                 // add failed - delete chunk.
-                delete_chunk(chunk);
+                reclaim_chunk(chunk);
             }
             return locate_target_chunk(key);
         }

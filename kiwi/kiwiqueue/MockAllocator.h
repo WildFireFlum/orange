@@ -23,9 +23,11 @@ public:
         unsigned int old_offset = __sync_fetch_and_add(&m_offset, numOfBytes);
         if (listIndex == 0) {
             __sync_fetch_and_add(&m_chunk_allocations, 1);
+            std::cout << "TID: " << getThreadId() << " Allocating the " << m_chunk_allocations <<  " chunk" << "\n";
         }
         else if (listIndex == 1) {
             __sync_fetch_and_add(&m_ro_allocations, 1);
+            std::cout << "TID: " << getThreadId() << " Allocating the " << m_ro_allocations <<  " chunk" << "\n";
         }
         else {
             std::cout << "Error, allocating to an unidentified list" << std::endl;

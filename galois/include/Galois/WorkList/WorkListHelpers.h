@@ -28,6 +28,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <iostream>
 
 #include <vector>
 #include <iostream>
@@ -364,7 +365,9 @@ protected:
   }
 
   inline sl_node_t *sl_new_node(int levelmax, sl_node_t *next) {
-    int e = term.getEpoch() % 3;
+    int e = term.getEpoch();
+    std::cout << "TID: " << Galois::Runtime::LL::getTID() << " Current deallocate epoch: " << e << "\n";
+    e %= 3;
     sl_node_t *node = reinterpret_cast<sl_node_t *>(heap[e].allocate(sizeof(sl_node_t) + levelmax*sizeof(sl_node_t*), levelmax-1));
     node->init(levelmax, next);
     return node;
@@ -377,7 +380,9 @@ protected:
   }
 
   inline void sl_delete_node(sl_node_t *n) {
-    int e = (term.getEpoch() + 2) % 3;
+    int e = (term.getEpoch() + 2);
+    std::cout << "TID: " << Galois::Runtime::LL::getTID() << " Current deallocate epoch: " << e << "\n";
+    e %= 3;
     heap[e].deallocate(n, n->toplevel-1);
   }
 

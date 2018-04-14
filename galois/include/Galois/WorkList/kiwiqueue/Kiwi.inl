@@ -2,9 +2,10 @@
 #define __GALOIS_KIWI_H__
 
 #include <algorithm>
+#include <iostream>
 
-#include "Utils.h"
 #include "Allocator.h"
+#include "Utils.h"
 
 #define KIWI_CHUNK_SIZE 1024
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
@@ -29,17 +30,35 @@ enum PPA_MASK {
     FROZEN = 1 << 31,
 };
 
+template <typename T>
+bool is_marked(T* j) {
+    return ((uintptr_t)j & (uintptr_t)0x01) != 0;
+}
+
+template <typename T>
+T* unset_mark(T* j) {
+    return reinterpret_cast<T*>((uintptr_t)j & ~(uintptr_t)0x01);
+}
+
+template <typename T>
+T* set_mark(T* j) {
+    return reinterpret_cast<T*>((uintptr_t)j | (uintptr_t)0x01);
+}
+
 /**
- * A node in a list of chunks which are going to be rebalanced
- * used to synchronize the executions of rebalance
+ * The f
  * @tparam Comparer - Compares keys
  * @tparam K
  */
 template <class Comparer, typename K>
 class KiWiRebalancedObject {
-   public:
-    KiwiChunk<Comparer, K>* first;
-    KiwiChunk<Comparer, K>* volatile next;
+   public:  // dummy field which is used by the heap when the node is freed.
+    // (without it, freeing a node would corrupt a field, possibly affecting
+    // a concurrent traversal.)
+    void* dummy;
+
+    KiwiChunk<Comparer, K>* volatile first; // the first chunk share this object
+    KiwiChunk<Comparer, K>* volatile next;  // next potential chunk - nullptr when the engagement stage is over
 
     void init(KiwiChunk<Comparer, K>* f, KiwiChunk<Comparer, K>* n) {
         first = f;
@@ -98,21 +117,10 @@ class KiwiChunk {
     uint32_t ppa_len;
     uint32_t volatile ppa[0];
 
-    static bool is_marked(element_t* j) {
-        return ((uintptr_t)j & (uintptr_t)0x01) != 0;
-    }
-
-    static element_t* unset_mark(element_t* j) {
-        return reinterpret_cast<element_t*>((uintptr_t)j & ~(uintptr_t)0x01);
-    }
-
-    static element_t* set_mark(element_t* j) {
-        return reinterpret_cast<element_t*>((uintptr_t)j | (uintptr_t)0x01);
-    }
-
     void init(unsigned int num_threads) {
         // Used for debugging
-        element_t* const UNINITIALIZED = reinterpret_cast<element_t* const>(0xdeadf00d);
+        element_t* const UNINITIALIZED =
+            reinterpret_cast<element_t* const>(0xdeadf00d);
         begin_sentinel.next = unset_mark(&end_sentinel);
         end_sentinel.next = nullptr;
         status = INFANT_CHUNK;
@@ -133,8 +141,8 @@ class KiwiChunk {
     /// Based on lock free list from "The art of multiprocessor programming"
     void find(const Comparer& compare,
               const K& key,
-              element_t** out_prev,
-              element_t** out_next) {
+              element_t*& out_prev,
+              element_t*& out_next) {
         element_t* pred = nullptr;
         element_t* curr = nullptr;
         element_t* succ = nullptr;
@@ -155,22 +163,15 @@ class KiwiChunk {
                     succ = curr->next;
                 }
 
-                if (curr == &end_sentinel) {
-                    // the list is empty
-                    if (out_prev) *out_prev = pred;
-                    if (out_next) *out_next = curr;
-                    return;
-                }
-
-                if (!compare(curr->key, key)) {
-                    if (out_prev) *out_prev = pred;
-                    if (out_next) *out_next = curr;
+                if (curr == &end_sentinel || !compare(curr->key, key)) {
+                    out_prev = pred;
+                    out_next = curr;
                     return;
                 }
 
                 if (unset_mark(succ) == &end_sentinel) {
-                    if (out_prev) *out_prev = curr;
-                    if (out_next) *out_next = &end_sentinel;
+                    out_prev = curr;
+                    out_next = &end_sentinel;
                     return;
                 }
 
@@ -185,7 +186,7 @@ class KiwiChunk {
         while (true) {
             element_t* left;
             element_t* right;
-            find(compare, key, &left, &right);
+            find(compare, key, left, right);
 
             element.next = right;
             if (ATOMIC_CAS_MB(&(left->next), unset_mark(right),
@@ -234,7 +235,7 @@ class KiwiChunk {
     }
 
     // TODO: should be improved
-    uint32_t get_keys(K (&arr)[KIWI_CHUNK_SIZE]) {
+    uint32_t get_keys_to_preserve_from_chunk(K (&arr)[KIWI_CHUNK_SIZE]) {
         if (status != FROZEN_CHUNK) {
             // invalid call
             return 0;
@@ -324,11 +325,44 @@ class KiwiChunk {
                 if (is_marked(nextElem)) {
                     break;
                 }
-            } while (!ATOMIC_CAS_MB(&currElem->next, nextElem, set_mark(nextElem)));
+            } while (
+                !ATOMIC_CAS_MB(&currElem->next, nextElem, set_mark(nextElem)));
 
-            find(comparer, key, nullptr, nullptr);
+            element_t *prev = nullptr, *next = nullptr;
+            find(comparer, key, prev, next);
             return true;
         }
+    }
+
+    /// Prints the queue and counts its elements, used for debugging and is not
+    /// synchronized,
+    /// TODO: remove
+    unsigned int printAndCount() {
+        element_t* e = unset_mark(begin_sentinel.next);
+        unsigned int chunkCount = 0;
+        while (e != &end_sentinel) {
+            std::cout << reinterpret_cast<int>(e->key) << " -> ";
+            e = unset_mark(e->next);
+            chunkCount++;
+        }
+
+        std::cout << "\\\n count = " << chunkCount << "\n";
+        return chunkCount;
+    }
+
+    /**
+     * Counts the number of elements in a chunk, not synchronized
+     * @note: Assumed to be run in a sequential manner
+     * @return The number of elements in a chunk
+     */
+    unsigned int size() {
+        element_t* e = unset_mark(begin_sentinel.next);
+        unsigned int chunkCount = 0;
+        while (e != &end_sentinel) {
+            e = unset_mark(e->next);
+            chunkCount++;
+        }
+        return chunkCount;
     }
 };
 
@@ -355,18 +389,6 @@ class KiWiPQ {
     chunk_t end_sentinel;
     // LockFreeSkipListSet<Comparer, K, chunk_t*> index;
 
-    static bool is_marked(chunk_t* j) {
-        return ((uintptr_t)j & (uintptr_t)0x01) != 0;
-    }
-
-    static chunk_t* unset_mark(chunk_t* j) {
-        return reinterpret_cast<chunk_t*>((uintptr_t)j & ~(uintptr_t)0x01);
-    }
-
-    static chunk_t* set_mark(chunk_t* j) {
-        return reinterpret_cast<chunk_t*>((uintptr_t)j | (uintptr_t)0x01);
-    }
-
     chunk_t* new_chunk() {
         // Second argument is an index of a freelist to use to reclaim
         chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(
@@ -374,6 +396,8 @@ class KiWiPQ {
         chunk->init(num_of_threads);
         return chunk;
     }
+
+    void reclaim_chunk(chunk_t* chunk) { allocator->reclaim(chunk, 0); }
 
     void delete_chunk(chunk_t* chunk) { allocator->deallocate(chunk, 0); }
 
@@ -383,6 +407,8 @@ class KiWiPQ {
         ro->init(f, n);
         return ro;
     }
+
+    void reclaim_ro(rebalance_object_t* ro) { allocator->reclaim(ro, 1); }
 
     void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1); }
 
@@ -402,21 +428,22 @@ class KiWiPQ {
         return false;
     }
 
-    void rebalance(chunk_t* chunk) {
+    virtual void rebalance(chunk_t* chunk) {
         // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
         }
         rebalance_object_t* ro = chunk->ro;
+
         volatile chunk_t* last = chunk;
         while (true) {
-            volatile chunk_t* next = unset_mark(ro->next);
-            if (next == nullptr) {
+            chunk_t* next = unset_mark(ro->next);
+            if (next == nullptr || next == &end_sentinel) {
                 break;
             }
             if (policy(next)) {
-                ATOMIC_CAS_MB(&next, nullptr, ro);
+                ATOMIC_CAS_MB(&(next->ro), nullptr, ro);
 
                 if (next->ro == ro) {
                     ATOMIC_CAS_MB(&(ro->next), next, unset_mark(next->next));
@@ -430,8 +457,7 @@ class KiWiPQ {
         }
 
         // search for last concurrently engaged chunk
-        while (unset_mark(last->next) != nullptr &&
-               unset_mark(last->next)->ro == ro) {
+        while (unset_mark(last->next)->ro == ro) {
             last = unset_mark(last->next);
         }
 
@@ -451,27 +477,33 @@ class KiWiPQ {
 
         do {
             K arr[KIWI_CHUNK_SIZE];
-            uint32_t count = c->get_keys(arr);
+            uint32_t count = c->get_keys_to_preserve_from_chunk(arr);
             std::sort(arr, arr + count, compare);
             for (uint32_t j = 0; j < count; j++) {
                 if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
                     // Cn is more than half full - create new chunk
 
-                    Cn->min_key = Cn->k[0].key;                  // set Cn min key - this value won't be change
-                    Cn->begin_sentinel.next = &Cn->k[0];         // connect begin sentinel to the list
-                    Cn->k[Cn->i - 1].next = &(Cn->end_sentinel); // close the list by point the last key to the end sentinel
+                    Cn->min_key = Cn->k[0].key;  // set Cn min key - this value
+                                                 // won't be change
+                    Cn->begin_sentinel.next =
+                        &Cn->k[0];  // connect begin sentinel to the list
+                    Cn->k[Cn->i - 1].next = &(
+                        Cn->end_sentinel);   // close the list by point the last
+                                             // key to the end sentinel
+                    Cn->next = new_chunk();  // create a new chunk and set
+                                             // Cn->next points to it
+                    Cn = Cn->next;           // Cn points to the new chunk
 
-                    Cn->next = new_chunk();                      // create a new chunk and set Cn->next points to it
-                    Cn = Cn->next;                               // Cn points to the new chunk
-                    Cn->parent = chunk;                          // set chunk as rebalance parent of the new chunk
+                    Cn->parent = ro->first;  // set chunk as rebalance parent of the
+                                             // new chunk
 
                     // TODO: delete it as soon as we use index again
                     Cn->status = NORMAL_CHUNK;
                 }
-                uint32_t i = Cn->i;
+                volatile uint32_t& i = Cn->i;
                 Cn->k[i].key = arr[j];
                 Cn->k[i].next = &(Cn->k[i + 1]);
-                Cn->i++;
+                i++;
             }
         } while ((c != last) && (c = unset_mark(c->next)));
 
@@ -479,9 +511,13 @@ class KiWiPQ {
 
         if (Cn->i > 0) {
             // we need to close the last chunk as well
-            Cn->min_key = Cn->k[0].key;                  // set Cn min key - this value won't be change
-            Cn->begin_sentinel.next = &Cn->k[0];         // connect begin sentinel to the list
-            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel); // close the list by point the last key to the end sentinel
+            Cn->min_key =
+                Cn->k[0].key;  // set Cn min key - this value won't be change
+            Cn->begin_sentinel.next =
+                &Cn->k[0];  // connect begin sentinel to the list
+            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by
+                                                          // point the last key
+                                                          // to the end sentinel
         } else {
             // all the chunks in ro are empty
             delete_chunk(Cn);
@@ -489,60 +525,58 @@ class KiWiPQ {
             is_empty = true;
         }
 
-
         // 5. replace
         do {
             c = last->next;
         } while (!is_marked(c) &&
-                 !ATOMIC_CAS_MB(&(last->next), unset_mark(c),
-                                set_mark(c)));
+                 !ATOMIC_CAS_MB(&(last->next), unset_mark(c), set_mark(c)));
 
-        if(!is_empty) {
-            Cn->next = c;
+        if (!is_empty) {
+            Cn->next = unset_mark(c);
         }
 
         do {
-            //TODO: should validate this part ...
+            // TODO: should validate this part ...
             chunk_t* pred = load_prev(ro->first);
-            if (!is_empty) {
-                c = Cf;
-            }
 
-            if (pred != nullptr && ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
-                // success - normalize chunk and free old chunks
-                // normalize(chunk);
-
-                chunk_t* curr = ro->first;
-                chunk_t* next;
-                do {
-                    next = unset_mark(curr->next);
-                    delete_chunk(curr);
-                } while ((curr != last) && (curr = next));
-
-                delete_ro(ro);
-                return;
-            }
-
-            if (pred == nullptr || unset_mark(pred->next)->parent == chunk) {
-                // someone else succeeded - delete the chunks we just created
-                // and normalize
+            if (pred == nullptr) {
+                // ro-> first is not accessible - someone else succeeded - delete the chunks we just created and return
                 if (!is_empty) {
-                    chunk_t *curr = Cf;
-                    chunk_t *next;
+                    chunk_t* curr = Cf;
+                    chunk_t* next;
                     do {
                         next = unset_mark(curr->next);
                         delete_chunk(curr);
                     } while ((curr != Cn) && (curr = next));
                 }
-                // normalize(chunk);
+
+                // we can help normalize here if we want
                 return;
             }
 
-            // insertion failed, help predecessor and retry
-            if (pred->ro != nullptr) {
-                // TODO: ...
+            if (!is_empty) {
+                c = Cf;
+            }
+
+            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
+                // success - normalize chunk and free old chunks and normalize
+                // normalize
+                chunk_t* curr = ro->first;
+                chunk_t* next;
+                do {
+                    next = unset_mark(curr->next);
+                    reclaim_chunk(curr);
+                } while ((curr != last) && (curr = next));
+
+                reclaim_ro(ro);
+                return;
+            }
+
+            if (pred->status == FROZEN_CHUNK && unset_mark(pred->next) == ro->first) {
+                // the predecessor is being rebalanced - help it and retry
                 rebalance(pred);
             }
+
         } while (true);
     }
 
@@ -552,8 +586,9 @@ class KiWiPQ {
         if (next == &end_sentinel) {
             // the chunk list is empty, we need to create a chunk
             chunk_t* chunk = new_chunk();
-            chunk->min_key = key;           // set chunk's min key
-            chunk->next = &end_sentinel;    // set chunk->next point to end sentinel
+            chunk->min_key = key;  // set chunk's min key
+            chunk->next =
+                &end_sentinel;  // set chunk->next point to end sentinel
             // try to connect the new chunk to the list
             if (!ATOMIC_CAS_MB(&(begin_sentinel.next),
                                unset_mark(&end_sentinel), unset_mark(chunk))) {
@@ -580,12 +615,13 @@ class KiWiPQ {
         // TODO: should use index instead of traversing the list
         chunk_t* prev = &begin_sentinel;
         chunk_t* curr = unset_mark(prev->next);
-        while (curr != &end_sentinel && curr != chunk) {
+
+        while (curr != chunk && curr != &end_sentinel && !compare(chunk->min_key, curr->min_key)) {
             prev = curr;
             curr = unset_mark(prev->next);
         }
 
-        if (curr == &end_sentinel) {
+        if (curr != chunk) {
             return nullptr;
         }
 
@@ -603,19 +639,30 @@ class KiWiPQ {
     }
 
    public:
-
 #ifdef GALOIS
-    KiWiPQ() : allocator(new GaloisAllocator()), begin_sentinel(), end_sentinel(), num_of_threads(getNumOfThreads()) {
+    KiWiPQ()
+        : allocator(new GaloisAllocator()),
+          begin_sentinel(),
+          end_sentinel(),
+          num_of_threads(getNumOfThreads()) {
         begin_sentinel.next = &end_sentinel;
     }
 #endif
 
-    KiWiPQ(Allocator_t* alloc, const K& begin_key, const K& end_key, unsigned int num_threads)
-        : allocator(alloc), begin_sentinel(), end_sentinel(), num_of_threads(num_threads) {
+    KiWiPQ(Allocator_t* alloc,
+           const K& begin_key,
+           const K& end_key,
+           unsigned int num_threads)
+        : allocator(alloc),
+          begin_sentinel(),
+          end_sentinel(),
+          num_of_threads(num_threads) {
         begin_sentinel.next = &end_sentinel;
         begin_sentinel.min_key = begin_key;
         end_sentinel.min_key = end_key;
     }
+
+    virtual ~KiWiPQ() = default;
 
     bool push(const K& key) {
         chunk_t* chunk = locate_target_chunk(key);
@@ -662,6 +709,42 @@ class KiWiPQ {
             chunk = unset_mark(chunk->next);
         }
         return false;
+    }
+
+    /// Prints the queue and counts its elements, used for debugging and is not
+    /// synchronized
+    /// TODO: remove
+    unsigned int printAndCount() {
+        std::cout << "\n pq state:\n";
+        chunk_t* chunk = unset_mark(begin_sentinel.next);
+        int inChunkCount = 0;
+        unsigned int totalCount = 0;
+        while (chunk != &end_sentinel) {
+            std::cout << "(" << inChunkCount++ << " - " << chunk << " ) ";
+            totalCount += chunk->printAndCount();
+            chunk = unset_mark(chunk->next);
+        }
+        std::cout << "total count " << totalCount << "\n";
+        std::cout << "\n-------------\n\n";
+
+        return totalCount;
+    }
+
+    /**
+     * Counts the number of elements in the queue
+     * @note: Assumed to be run in a sequential manner
+     * @return The number of elements in a chunk
+     */
+    unsigned int size() {
+        chunk_t* chunk = unset_mark(begin_sentinel.next);
+        int inChunkCount = 0;
+        unsigned int totalCount = 0;
+        while (chunk != &end_sentinel) {
+            totalCount += chunk->size();
+            chunk = unset_mark(chunk->next);
+        }
+
+        return totalCount;
     }
 };
 
