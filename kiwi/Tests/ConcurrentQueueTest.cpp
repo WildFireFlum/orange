@@ -141,16 +141,5 @@ TEST_F(ConcurrentQueueTest, TestStressPushPop) {
     // Make sure that all items were pushed
     EXPECT_EQ(num_of_pushes - num_of_pops, queueFinalSize);
 
-
-    // Make sure queue is sorted
-    auto prev = -1;
-    for (auto i = 0; i < queueFinalSize; i++) {
-        int curr;
-        EXPECT_TRUE(getQueue().try_pop(curr));
-        // Every item is inserted only once
-        EXPECT_GT(curr, prev);
-        prev = curr;
-    }
-    // validate the queue is empty
-    EXPECT_FALSE(getQueue().try_pop(prev));
+    checkQueueSizeAndValidity(queueFinalSize);
 }

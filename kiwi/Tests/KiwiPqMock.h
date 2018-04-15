@@ -26,9 +26,13 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
                                            begin_key,
                                            end_key,
                                            num_threads),
-          num_of_rebalances(0) {}
+          num_of_rebalances(0), should_use_policy(false) {}
 
     unsigned int getRebalanceCount() { return num_of_rebalances; }
+
+    unsigned int getChunkPolicyThreshold() { return KIWI_CHUNK_SIZE * (3.0 / 4.0);}
+
+    void setShouldUsePolicy(bool should) { should_use_policy = should; }
 
     /**
      * Counts the number of chunks in the queue
@@ -51,7 +55,12 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
         KiWiPQ<Comparer, K, Allocator_t>::rebalance(chunk);
     }
 
+    virtual bool policy(volatile chunk_t* chunk) {
+        return should_use_policy &&  (chunk->i >= getChunkPolicyThreshold());
+    }
+
    private:
+    volatile bool should_use_policy;
     volatile unsigned int num_of_rebalances;
 };
 

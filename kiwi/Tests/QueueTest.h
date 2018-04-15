@@ -28,6 +28,8 @@ public:
 
     virtual void TearDown();
 
+    void checkQueueSizeAndValidity(unsigned int size);
+
     virtual ~QueueTest() = default;
 
 protected:

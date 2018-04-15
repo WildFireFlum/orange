@@ -57,8 +57,10 @@ class KiWiRebalancedObject {
     // a concurrent traversal.)
     void* dummy;
 
-    KiwiChunk<Comparer, K>* volatile first; // the first chunk share this object
-    KiwiChunk<Comparer, K>* volatile next;  // next potential chunk - nullptr when the engagement stage is over
+    KiwiChunk<Comparer,
+              K>* volatile first;           // the first chunk share this object
+    KiwiChunk<Comparer, K>* volatile next;  // next potential chunk - nullptr
+                                            // when the engagement stage is over
 
     void init(KiwiChunk<Comparer, K>* f, KiwiChunk<Comparer, K>* n) {
         first = f;
@@ -120,9 +122,10 @@ class KiwiChunk {
     void init(unsigned int num_threads) {
         // Used for debugging
         element_t* const UNINITIALIZED =
-            reinterpret_cast<element_t* const>(0xdeadf00d & (~1)) ;
+            reinterpret_cast<element_t* const>(0xdeadf00d & (~1));
         begin_sentinel.next = unset_mark(&end_sentinel);
-        // The next of end_sentinel must not have its LSB on, otherwise find is not correct
+        // The next of end_sentinel must not have its LSB on, otherwise find is
+        // not correct
         end_sentinel.next = reinterpret_cast<element_t* const>(0xedde0000);
         status = INFANT_CHUNK;
         ppa_len = num_threads;
@@ -450,12 +453,9 @@ class KiWiPQ {
                 if (next->ro == ro) {
                     ATOMIC_CAS_MB(&(ro->next), next, unset_mark(next->next));
                     last = next;
-                } else {
-                    ATOMIC_CAS_MB(&(ro->next), next, nullptr);
                 }
-            } else {
-                ATOMIC_CAS_MB(&(ro->next), next, nullptr);
             }
+            ATOMIC_CAS_MB(&(ro->next), next, nullptr);
         }
 
         // search for last concurrently engaged chunk
@@ -496,8 +496,9 @@ class KiWiPQ {
                                              // Cn->next points to it
                     Cn = Cn->next;           // Cn points to the new chunk
 
-                    Cn->parent = ro->first;  // set chunk as rebalance parent of the
-                                             // new chunk
+                    Cn->parent =
+                        ro->first;  // set chunk as rebalance parent of the
+                                    // new chunk
 
                     // TODO: delete it as soon as we use index again
                     Cn->status = NORMAL_CHUNK;
@@ -542,7 +543,8 @@ class KiWiPQ {
             chunk_t* pred = load_prev(ro->first);
 
             if (pred == nullptr) {
-                // ro-> first is not accessible - someone else succeeded - delete the chunks we just created and return
+                // ro-> first is not accessible - someone else succeeded -
+                // delete the chunks we just created and return
                 if (!is_empty) {
                     chunk_t* curr = Cf;
                     chunk_t* next;
@@ -560,7 +562,8 @@ class KiWiPQ {
                 c = Cf;
             }
 
-            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
+            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first),
+                              unset_mark(c))) {
                 // success - normalize chunk and free old chunks and normalize
                 // normalize
                 chunk_t* curr = ro->first;
@@ -574,7 +577,8 @@ class KiWiPQ {
                 return;
             }
 
-            if (pred->status == FROZEN_CHUNK && unset_mark(pred->next) == ro->first) {
+            if (pred->status == FROZEN_CHUNK &&
+                unset_mark(pred->next) == ro->first) {
                 // the predecessor is being rebalanced - help it and retry
                 rebalance(pred);
             }
@@ -618,7 +622,8 @@ class KiWiPQ {
         chunk_t* prev = &begin_sentinel;
         chunk_t* curr = unset_mark(prev->next);
 
-        while (curr != chunk && curr != &end_sentinel && !compare(chunk->min_key, curr->min_key)) {
+        while (curr != chunk && curr != &end_sentinel &&
+               !compare(chunk->min_key, curr->min_key)) {
             prev = curr;
             curr = unset_mark(prev->next);
         }
@@ -634,7 +639,7 @@ class KiWiPQ {
         // TODO
     }
 
-    bool policy(volatile chunk_t* chunk) {
+    virtual bool policy(volatile chunk_t* chunk) {
         // TODO ....
         return false;  // chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i <
         // (KIWI_CHUNK_SIZE / 4);
