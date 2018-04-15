@@ -7,14 +7,14 @@
 #include "Allocator.h"
 #include "Utils.h"
 
-#define KIWI_CHUNK_SIZE 256
+#define KIW_DEFAULT_CHUNK_SIZE  1024
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
 #define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
 
-template <class Comparer, typename K>
+template <class Comparer, typename K, uint32_t N>
 class KiwiChunk;
 
-template <class Comparer, typename K>
+template <class Comparer, typename K, uint32_t N>
 class KiWiRebalancedObject;
 
 enum ChunkStatus {
@@ -31,17 +31,17 @@ enum PPA_MASK {
 };
 
 template <typename T>
-bool is_marked(T* j) {
+inline bool is_marked(T* j) {
     return ((uintptr_t)j & (uintptr_t)0x01) != 0;
 }
 
 template <typename T>
-T* unset_mark(T* j) {
+inline T* unset_mark(T* j) {
     return reinterpret_cast<T*>((uintptr_t)j & ~(uintptr_t)0x01);
 }
 
 template <typename T>
-T* set_mark(T* j) {
+inline T* set_mark(T* j) {
     return reinterpret_cast<T*>((uintptr_t)j | (uintptr_t)0x01);
 }
 
@@ -50,17 +50,17 @@ T* set_mark(T* j) {
  * @tparam Comparer - Compares keys
  * @tparam K
  */
-template <class Comparer, typename K>
+template <class Comparer, typename K, uint32_t N>
 class KiWiRebalancedObject {
    public:  // dummy field which is used by the heap when the node is freed.
     // (without it, freeing a node would corrupt a field, possibly affecting
     // a concurrent traversal.)
     void* dummy;
 
-    KiwiChunk<Comparer, K>* volatile first; // the first chunk share this object
-    KiwiChunk<Comparer, K>* volatile next;  // next potential chunk - nullptr when the engagement stage is over
+    KiwiChunk<Comparer, K, N>* volatile first; // the first chunk share this object
+    KiwiChunk<Comparer, K, N>* volatile next;  // next potential chunk - nullptr when the engagement stage is over
 
-    void init(KiwiChunk<Comparer, K>* f, KiwiChunk<Comparer, K>* n) {
+    void init(KiwiChunk<Comparer, K, N>* f, KiwiChunk<Comparer, K, N>* n) {
         first = f;
         next = n;
     }
@@ -70,11 +70,12 @@ class KiWiRebalancedObject {
  * Pre-allocated memory containing a sorted concurrent list
  * of nodes in which the priorities and the values are stored
  * @tparam Comparer - Compares keys
- * @tparam K
+ * @tparam K        - Keys type
+ * @tparam N        - Number of keys in a chunk
  */
-template <class Comparer, typename K>
+template <class Comparer, typename K, uint32_t N=KIW_DEFAULT_CHUNK_SIZE>
 class KiwiChunk {
-    using rebalance_object_t = KiWiRebalancedObject<Comparer, K>;
+    using rebalance_object_t = KiWiRebalancedObject<Comparer, K, N>;
 
    public:
     // dummy field which is used by the heap when the node is freed.
@@ -93,20 +94,20 @@ class KiwiChunk {
     /// Two fixed sentinels keep the invariant of an element always
     /// having both a previous and a next element
     element_t begin_sentinel;
-    element_t k[KIWI_CHUNK_SIZE];
+    element_t k[N];
     element_t end_sentinel;
 
     /// The minimal key in the list, except for the first non-sentinel chunk
     K min_key;
 
     /// A link to the next chunk
-    KiwiChunk<Comparer, K>* volatile next;
+    KiwiChunk<Comparer, K, N>* volatile next;
 
     /// The status of the chunk
     volatile uint32_t status;
 
     /// The parent chunk during rebalacing (while this chunk is still INFANT)
-    KiwiChunk<Comparer, K>* volatile parent;
+    KiwiChunk<Comparer, K, N>* volatile parent;
 
     /// Ponits to the rebalanced object that in win in the consensus at the
     /// begging of rebalanced
@@ -134,7 +135,7 @@ class KiwiChunk {
         }
 
         // initialize the elements struct
-        for (int j = 0; j < KIWI_CHUNK_SIZE; j++) {
+        for (int j = 0; j < N; j++) {
             k[j].next = UNINITIALIZED;
             k[j].deleted = false;
         }
@@ -237,13 +238,13 @@ class KiwiChunk {
     }
 
     // TODO: should be improved
-    uint32_t get_keys_to_preserve_from_chunk(K (&arr)[KIWI_CHUNK_SIZE]) {
+    uint32_t get_keys_to_preserve_from_chunk(K (&arr)[N]) {
         if (status != FROZEN_CHUNK) {
             // invalid call
             return 0;
         }
 
-        bool flags[KIWI_CHUNK_SIZE] = {false};
+        bool flags[N] = {false};
 
         // add all list elements
         element_t* element = begin_sentinel.next;
@@ -259,7 +260,7 @@ class KiwiChunk {
             uint32_t ppa_j = ppa[j];
             if (ppa_j & PUSH) {
                 uint32_t index = ppa_j & IDLE;
-                if (index < KIWI_CHUNK_SIZE) {
+                if (index < N) {
                     flags[index] = true;
                 }
             }
@@ -270,14 +271,14 @@ class KiwiChunk {
             uint32_t ppa_j = ppa[j];
             if (ppa_j & POP) {
                 uint32_t index = ppa_j & IDLE;
-                if (index < KIWI_CHUNK_SIZE) {
+                if (index < N) {
                     flags[index] = false;
                 }
             }
         }
 
         uint32_t count = 0;
-        for (int j = 0; j < KIWI_CHUNK_SIZE; j++) {
+        for (int j = 0; j < N; j++) {
             if (flags[j]) {
                 arr[count++] = k[j].key;
             }
@@ -372,10 +373,10 @@ class KiwiChunk {
 #include "GaloisAllocator.h"
 #endif
 
-template <typename Comparer, typename K, typename Allocator_t>
+template <typename Comparer, typename K, typename Allocator_t, uint32_t N>
 class KiWiPQ {
-    using chunk_t = KiwiChunk<Comparer, K>;
-    using rebalance_object_t = KiWiRebalancedObject<Comparer, K>;
+    using chunk_t = KiwiChunk<Comparer, K, N>;
+    using rebalance_object_t = KiWiRebalancedObject<Comparer, K, N>;
 
    protected:
     // keys comparator
@@ -399,9 +400,9 @@ class KiWiPQ {
         return chunk;
     }
 
-    void reclaim_chunk(chunk_t* chunk) { allocator->reclaim(chunk, 0); }
+    inline void reclaim_chunk(chunk_t* chunk) { allocator->reclaim(chunk, 0); }
 
-    void delete_chunk(chunk_t* chunk) { allocator->deallocate(chunk, 0); }
+    inline void delete_chunk(chunk_t* chunk) { allocator->deallocate(chunk, 0); }
 
     rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
         rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(
@@ -422,7 +423,7 @@ class KiWiPQ {
             ATOMIC_CAS_MB(&(chunk->status), INFANT_CHUNK, NORMAL_CHUNK);
             return true;
         }
-        if (chunk->i >= KIWI_CHUNK_SIZE || chunk->status == FROZEN_CHUNK ||
+        if (chunk->i >= N || chunk->status == FROZEN_CHUNK ||
             policy(chunk)) {
             rebalance(chunk);
             return true;
@@ -478,11 +479,11 @@ class KiWiPQ {
         chunk_t* Cf = Cn;
 
         do {
-            K arr[KIWI_CHUNK_SIZE];
+            K arr[N];
             uint32_t count = c->get_keys_to_preserve_from_chunk(arr);
             std::sort(arr, arr + count, compare);
             for (uint32_t j = 0; j < count; j++) {
-                if (Cn->i > (KIWI_CHUNK_SIZE / 2)) {
+                if (Cn->i > (N / 2)) {
                     // Cn is more than half full - create new chunk
 
                     Cn->min_key = Cn->k[0].key;  // set Cn min key - this value
@@ -636,8 +637,8 @@ class KiWiPQ {
 
     bool policy(volatile chunk_t* chunk) {
         // TODO ....
-        return false;  // chunk->i > (KIWI_CHUNK_SIZE * 3 / 4) || chunk->i <
-        // (KIWI_CHUNK_SIZE / 4);
+        return false;  // chunk->i > (N * 3 / 4) || chunk->i <
+        // (N / 4);
     }
 
    public:
@@ -676,7 +677,7 @@ class KiWiPQ {
         // allocate cell in linked list
         uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);
 
-        if (i >= KIWI_CHUNK_SIZE) {
+        if (i >= N) {
             // no more free space - trigger rebalance
             rebalance(chunk);
             return push(key);

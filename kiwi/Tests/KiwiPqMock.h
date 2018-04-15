@@ -12,17 +12,17 @@
 #include <thread>
 #endif
 
-template <typename Comparer, typename K, typename Allocator_t>
-class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
+template <typename Comparer, typename K, typename Allocator_t, uint32_t N=KIW_DEFAULT_CHUNK_SIZE>
+class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t, N> {
     using chunk_t = KiwiChunk<Comparer, K>;
-    using KiwiPQ = KiWiPQ<Comparer, K, Allocator_t>;
+    using KiwiPQ = KiWiPQ<Comparer, K, Allocator_t, N>;
 
    public:
     KiwiPQMock(Allocator_t* alloc,
                const K& begin_key,
                const K& end_key,
                unsigned int num_threads)
-        : KiWiPQ<Comparer, K, Allocator_t>(alloc,
+        : KiWiPQ<Comparer, K, Allocator_t, N>(alloc,
                                            begin_key,
                                            end_key,
                                            num_threads),
@@ -48,7 +48,7 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
    protected:
     virtual void rebalance(chunk_t* chunk) {
         ATOMIC_FETCH_AND_INC_FULL(&num_of_rebalances);
-        KiWiPQ<Comparer, K, Allocator_t>::rebalance(chunk);
+        KiWiPQ<Comparer, K, Allocator_t, N>::rebalance(chunk);
     }
 
    private:

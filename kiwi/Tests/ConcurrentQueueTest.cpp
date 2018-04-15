@@ -58,7 +58,7 @@ class ConcurrentQueueTest : public QueueTest {
 int ConcurrentQueueTest::numOfThreads = 8;
 
 TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
-    const auto num_of_pushes = (KIWI_CHUNK_SIZE * 64) + 1;
+    const auto num_of_pushes = (KIW_DEFAULT_CHUNK_SIZE * 64) + 1;
     // Make sure no duplicate values
     const auto min_val = (num_of_pushes / numOfThreads) + 1;
     auto total_inserted = 0;
@@ -93,7 +93,7 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
     auto pushNumber = [this]() { getQueue().push(numToPush); };
 
     // Fill a chunk with ones
-    for (int i = 0; i < KIWI_CHUNK_SIZE; i++) {
+    for (int i = 0; i < KIW_DEFAULT_CHUNK_SIZE; i++) {
         getQueue().push(numToPush);
     }
     EXPECT_EQ(getQueue().getNumOfChunks(), 1);
@@ -115,8 +115,8 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
 }
 
 TEST_F(ConcurrentQueueTest, TestStressPushPop) {
-    const auto num_of_pushes = KIWI_CHUNK_SIZE * 128;
-    const auto num_of_pops = KIWI_CHUNK_SIZE * 64;
+    const auto num_of_pushes = KIW_DEFAULT_CHUNK_SIZE * 128;
+    const auto num_of_pops = KIW_DEFAULT_CHUNK_SIZE * 64;
     const auto num_of_popping_threads = numOfThreads * 0.50;
     const auto num_of_pushing_threads = numOfThreads * 0.50;
 

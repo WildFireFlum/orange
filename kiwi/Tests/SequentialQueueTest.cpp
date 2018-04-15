@@ -26,7 +26,7 @@ TEST_F(SequentialQueueTest, TestMultiPushAscendingOnePopOneChunk) {
     auto& pq = getQueue();
     int num_to_pop = -1;
 
-    for (int i = first_num_to_push; i < KIWI_CHUNK_SIZE - 10; i++) {
+    for (int i = first_num_to_push; i < KIW_DEFAULT_CHUNK_SIZE - 10; i++) {
         pq.push(i);
     }
 
@@ -39,7 +39,7 @@ TEST_F(SequentialQueueTest, TestMultiPushDecendingOnePopOneChunk) {
     auto& pq = getQueue();
     int num_to_pop = -1;
 
-    for (int i = KIWI_CHUNK_SIZE - 10; i >= expected_pop; i--) {
+    for (int i = KIW_DEFAULT_CHUNK_SIZE - 10; i >= expected_pop; i--) {
         pq.push(i);
     }
 
@@ -49,7 +49,7 @@ TEST_F(SequentialQueueTest, TestMultiPushDecendingOnePopOneChunk) {
 
 TEST_F(SequentialQueueTest, TestMultiPushDecendingMultiPopOneChunk) {
     const int FIRST_POP = 10;
-    const int LAST_POP = KIWI_CHUNK_SIZE - 10;
+    const int LAST_POP = KIW_DEFAULT_CHUNK_SIZE - 10;
     auto& pq = getQueue();
 
     for (int i = LAST_POP; i >= FIRST_POP; i--) {
@@ -66,7 +66,7 @@ TEST_F(SequentialQueueTest, TestMultiPushDecendingMultiPopOneChunk) {
 
 TEST_F(SequentialQueueTest, TestMultiPushPopDecendingOneChunk) {
     const int FIRST_POP = 10;
-    const int LAST_POP = KIWI_CHUNK_SIZE - 10;
+    const int LAST_POP = KIW_DEFAULT_CHUNK_SIZE - 10;
     auto& pq = getQueue();
 
     for (int i = FIRST_POP; i >= LAST_POP; i--) {
@@ -79,7 +79,7 @@ TEST_F(SequentialQueueTest, TestMultiPushPopDecendingOneChunk) {
 
 TEST_F(SequentialQueueTest, TestMultiPushPopAscendingOneChunk) {
     const int FIRST_PUSH = 10;
-    const int LAST_PUSH = KIWI_CHUNK_SIZE - 10;
+    const int LAST_PUSH = KIW_DEFAULT_CHUNK_SIZE - 10;
     auto& pq = getQueue();
 
     for (int i = FIRST_PUSH; i <= LAST_PUSH; i++) {
@@ -93,7 +93,7 @@ TEST_F(SequentialQueueTest, TestMultiPushPopAscendingOneChunk) {
 TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
     const int NUM_OF_CHUNKS = 19;
     const int FIRST_POP = 10;
-    const int LAST_POP = (KIWI_CHUNK_SIZE * NUM_OF_CHUNKS) + 10;
+    const int LAST_POP = (KIW_DEFAULT_CHUNK_SIZE * NUM_OF_CHUNKS) + 10;
     auto& pq = getQueue();
 
     for (int i = FIRST_POP; i <= LAST_POP; i++) {
@@ -107,7 +107,7 @@ TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
 }
 
 TEST_F(SequentialQueueTest, TestHeapSort) {
-    const int COUNT = (KIWI_CHUNK_SIZE) * 5 + 10;
+    const int COUNT = (KIW_DEFAULT_CHUNK_SIZE) * 5 + 10;
     auto& pq = getQueue();
 
     srand(0xdeadbeef);
