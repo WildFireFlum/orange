@@ -26,7 +26,7 @@ TEST_F(SequentialQueueTest, TestMultiPushAscendingOnePopOneChunk) {
     auto& pq = getQueue();
     int num_to_pop = -1;
 
-    for (int i = first_num_to_push; i < KIWI_CHUNK_SIZE - 10; i++) {
+    for (int i = first_num_to_push; i < KIWI_TEST_CHUNK_SIZE - 10; i++) {
         pq.push(i);
     }
 
@@ -39,7 +39,7 @@ TEST_F(SequentialQueueTest, TestMultiPushDecendingOnePopOneChunk) {
     auto& pq = getQueue();
     int num_to_pop = -1;
 
-    for (int i = KIWI_CHUNK_SIZE - 10; i >= expected_pop; i--) {
+    for (int i = KIWI_TEST_CHUNK_SIZE - 10; i >= expected_pop; i--) {
         pq.push(i);
     }
 
@@ -49,7 +49,7 @@ TEST_F(SequentialQueueTest, TestMultiPushDecendingOnePopOneChunk) {
 
 TEST_F(SequentialQueueTest, TestMultiPushDecendingMultiPopOneChunk) {
     const int FIRST_POP = 10;
-    const int LAST_POP = KIWI_CHUNK_SIZE - 10;
+    const int LAST_POP = KIWI_TEST_CHUNK_SIZE - 10;
     auto& pq = getQueue();
 
     for (int i = LAST_POP; i >= FIRST_POP; i--) {
@@ -66,7 +66,7 @@ TEST_F(SequentialQueueTest, TestMultiPushDecendingMultiPopOneChunk) {
 
 TEST_F(SequentialQueueTest, TestMultiPushPopDecendingOneChunk) {
     const int FIRST_POP = 10;
-    const int LAST_POP = KIWI_CHUNK_SIZE - 10;
+    const int LAST_POP = KIWI_TEST_CHUNK_SIZE - 10;
     auto& pq = getQueue();
 
     for (int i = FIRST_POP; i >= LAST_POP; i--) {
@@ -79,7 +79,7 @@ TEST_F(SequentialQueueTest, TestMultiPushPopDecendingOneChunk) {
 
 TEST_F(SequentialQueueTest, TestMultiPushPopAscendingOneChunk) {
     const int FIRST_PUSH = 10;
-    const int LAST_PUSH = KIWI_CHUNK_SIZE - 10;
+    const int LAST_PUSH = KIWI_TEST_CHUNK_SIZE - 10;
     auto& pq = getQueue();
 
     for (int i = FIRST_PUSH; i <= LAST_PUSH; i++) {
@@ -93,7 +93,7 @@ TEST_F(SequentialQueueTest, TestMultiPushPopAscendingOneChunk) {
 TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
     const int NUM_OF_CHUNKS = 19;
     const int FIRST_POP = 10;
-    const int LAST_POP = (KIWI_CHUNK_SIZE * NUM_OF_CHUNKS) + 10;
+    const int LAST_POP = (KIWI_TEST_CHUNK_SIZE * NUM_OF_CHUNKS) + 10;
     auto& pq = getQueue();
 
     for (int i = FIRST_POP; i <= LAST_POP; i++) {
@@ -107,7 +107,7 @@ TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
 }
 
 TEST_F(SequentialQueueTest, TestHeapSort) {
-    const int COUNT = (KIWI_CHUNK_SIZE) * 5 + 10;
+    const int COUNT = (KIWI_TEST_CHUNK_SIZE) * 5 + 10;
     auto& pq = getQueue();
 
     srand(0xdeadbeef);
@@ -130,7 +130,7 @@ TEST_F(SequentialQueueTest, TestPolicyMultiChunk) {
     auto& pq = getQueue();
 
     // Make sure that there are two chunks by filling one
-    for (int i = KIWI_CHUNK_SIZE / 2; i < KIWI_CHUNK_SIZE * (1.5) + 1; i++) {
+    for (int i = KIWI_TEST_CHUNK_SIZE / 2; i < KIWI_TEST_CHUNK_SIZE * (1.5) + 1; i++) {
         pq.push(i);
     }
     EXPECT_EQ(pq.getNumOfChunks(), 2);
@@ -138,13 +138,13 @@ TEST_F(SequentialQueueTest, TestPolicyMultiChunk) {
 
 
     // Fill up both chunks up to the threshold without triggering a rebalance
-    for (int i = 1; i < (KIWI_CHUNK_SIZE * 0.5); i++) {
+    for (int i = 1; i < (KIWI_TEST_CHUNK_SIZE * 0.5); i++) {
         pq.push(i);
     }
     EXPECT_EQ(pq.getRebalanceCount(), 1);
 
-    const int first_to_push = (KIWI_CHUNK_SIZE * (1.5)) + 1;
-    for (int i = 0; i < KIWI_CHUNK_SIZE * 0.5; i++) {
+    const int first_to_push = (KIWI_TEST_CHUNK_SIZE * (1.5)) + 1;
+    for (int i = 0; i < KIWI_TEST_CHUNK_SIZE * 0.5; i++) {
         pq.push(first_to_push + i);
     }
     EXPECT_EQ(pq.getRebalanceCount(), 1);
@@ -154,6 +154,6 @@ TEST_F(SequentialQueueTest, TestPolicyMultiChunk) {
     EXPECT_EQ(pq.getNumOfChunks(), 4);
     EXPECT_EQ(pq.getRebalanceCount(), 2);
 
-    const auto EXPECTED_QUEUE_SIZE = (KIWI_CHUNK_SIZE * 2) + 1;
+    const auto EXPECTED_QUEUE_SIZE = (KIWI_TEST_CHUNK_SIZE * 2) + 1;
     checkQueueSizeAndValidity(EXPECTED_QUEUE_SIZE);
 }

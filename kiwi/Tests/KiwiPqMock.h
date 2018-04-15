@@ -12,17 +12,19 @@
 #include <thread>
 #endif
 
-template <typename Comparer, typename K, typename Allocator_t>
-class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
-    using chunk_t = KiwiChunk<Comparer, K>;
-    using KiwiPQ = KiWiPQ<Comparer, K, Allocator_t>;
+#define KIWI_TEST_CHUNK_SIZE 256u
+
+template <typename Comparer, typename K, typename Allocator_t, uint32_t N=KIWI_TEST_CHUNK_SIZE>
+class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t, N> {
+    using chunk_t = KiwiChunk<Comparer, K, N>;
+    using KiwiPQ = KiWiPQ<Comparer, K, Allocator_t, N>;
 
    public:
     KiwiPQMock(Allocator_t* alloc,
                const K& begin_key,
                const K& end_key,
                unsigned int num_threads)
-        : KiWiPQ<Comparer, K, Allocator_t>(alloc,
+        : KiWiPQ<Comparer, K, Allocator_t, N>(alloc,
                                            begin_key,
                                            end_key,
                                            num_threads),
@@ -30,7 +32,7 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
 
     unsigned int getRebalanceCount() { return num_of_rebalances; }
 
-    unsigned int getChunkPolicyThreshold() { return KIWI_CHUNK_SIZE * (3.0 / 4.0);}
+    unsigned int getChunkPolicyThreshold() { return KIWI_TEST_CHUNK_SIZE * (3.0 / 4.0);}
 
     void setShouldUsePolicy(bool should) { should_use_policy = should; }
 
@@ -52,7 +54,7 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t> {
    protected:
     virtual void rebalance(chunk_t* chunk) {
         ATOMIC_FETCH_AND_INC_FULL(&num_of_rebalances);
-        KiWiPQ<Comparer, K, Allocator_t>::rebalance(chunk);
+        KiWiPQ<Comparer, K, Allocator_t, N>::rebalance(chunk);
     }
 
     virtual bool policy(volatile chunk_t* chunk) {
