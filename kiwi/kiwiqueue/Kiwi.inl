@@ -401,7 +401,7 @@ class KiWiPQ {
         // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
-            reclaim_ro(tmp);
+            delete_ro(tmp);
         }
         rebalance_object_t* ro = chunk->ro;
 
@@ -487,7 +487,7 @@ class KiWiPQ {
                                                           // to the end sentinel
         } else {
             // all the chunks in ro are empty
-            reclaim_chunk(Cn);
+            delete_chunk(Cn);
             Cf = Cn = nullptr;
             is_empty = true;
         }
@@ -514,7 +514,7 @@ class KiWiPQ {
                     chunk_t* next;
                     do {
                         next = unset_mark(curr->next);
-                        reclaim_chunk(curr);
+                        delete_chunk(curr);
                     } while ((curr != Cn) && (curr = next));
                 }
 

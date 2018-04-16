@@ -3,30 +3,27 @@
 
 #include "Allocator.h"
 
-template <uint32_t N=2>
 class GaloisAllocator : public Allocator {
 public:
     GaloisAllocator() : term(Runtime::getSystemTermination()) {}
 
     inline void* allocate(unsigned int numOfBytes, unsigned int listIndex) {
-        return reinterpret_cast<void*>(heaps[listIndex][term.getEpoch() % 3].allocate(numOfBytes, 0));
+        return reinterpret_cast<void*>(heaps[term.getEpoch() % 3].allocate(numOfBytes, listIndex));
     }
 
     inline void deallocate(void* ptr, unsigned int listIndex) {
-        heaps[listIndex][term.getEpoch() % 3].deallocate(ptr, 0);
+        heaps[term.getEpoch() % 3].deallocate(ptr, listIndex);
     }
 
     inline void reclaim(void* ptr, unsigned int listIndex) {
-        heaps[listIndex][(term.getEpoch() + 2)% 3].deallocate(ptr, 0);
+        heaps[(term.getEpoch() + 2)% 3].deallocate(ptr, listIndex);
     }
 
 private:
     // memory reclamation mechanism
 
-    static Runtime::MM::ListNodeHeap heaps[N][3];
+    Runtime::MM::ListNodeHeap heaps[3];
     Runtime::TerminationDetection& term;
 };
-
-Runtime::MM::ListNodeHeap GaloisAllocator::heaps[N][3];
 
 #endif //__KIWI_GALOIS_ALLOCATOR_H__
