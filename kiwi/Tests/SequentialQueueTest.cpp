@@ -7,7 +7,7 @@ class SequentialQueueTest : public QueueTest {
 
     virtual void SetUp() {
         QueueTest::SetUp();
-        m_pq.reset(new kiwipq_t(&s_allocator, -13371337, 13371337, 1));
+        m_pq.reset(new kiwipq_t(-13371337, 13371337, 1));
     }
 };
 

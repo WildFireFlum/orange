@@ -14,18 +14,16 @@
 
 #define KIWI_TEST_CHUNK_SIZE 256u
 
-template <typename Comparer, typename K, typename Allocator_t, uint32_t N=KIWI_TEST_CHUNK_SIZE>
-class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t, N> {
+template <class Comparer, class Allocator, typename K, uint32_t N=KIWI_TEST_CHUNK_SIZE>
+class KiwiPQMock : public KiWiPQ<Comparer, Allocator, K, N> {
     using chunk_t = KiwiChunk<Comparer, K, N>;
-    using KiwiPQ = KiWiPQ<Comparer, K, Allocator_t, N>;
+    using KiwiPQ = KiWiPQ<Comparer, Allocator, K, N>;
 
    public:
-    KiwiPQMock(Allocator_t* alloc,
-               const K& begin_key,
+    KiwiPQMock(const K& begin_key,
                const K& end_key,
                unsigned int num_threads)
-        : KiWiPQ<Comparer, K, Allocator_t, N>(alloc,
-                                           begin_key,
+        : KiWiPQ<Comparer, Allocator, K, N>(begin_key,
                                            end_key,
                                            num_threads),
           num_of_rebalances(0), should_use_policy(false) {}
@@ -54,7 +52,7 @@ class KiwiPQMock : public KiWiPQ<Comparer, K, Allocator_t, N> {
    protected:
     virtual void rebalance(chunk_t* chunk) {
         ATOMIC_FETCH_AND_INC_FULL(&num_of_rebalances);
-        KiWiPQ<Comparer, K, Allocator_t, N>::rebalance(chunk);
+        KiWiPQ<Comparer, Allocator, K, N>::rebalance(chunk);
     }
 
     virtual bool policy(volatile chunk_t* chunk) {

@@ -1,9 +1,5 @@
-//
-// Created by Ynon on 10/04/2018.
-//
-
-#ifndef KIWI_MOCKALLOCATOR_H
-#define KIWI_MOCKALLOCATOR_H
+#ifndef __KIWI_MOCK_ALLOCATOR_H__
+#define __KIWI_MOCK_ALLOCATOR_H__
 
 #include <iostream>
 #include "Allocator.h"
@@ -14,20 +10,18 @@
 /**
  * A fixed size non-releasable synchronized buffer
  */
+template <uint32_t N=2>
 class MockAllocator : public Allocator {
 public:
 
-    MockAllocator() : m_buf(new char[MOCK_ALLOC_SIZE]), m_offset(0), m_chunk_allocations(0), m_ro_allocations(0) {}
+    MockAllocator() : m_buf{0}, m_offset(0), m_allocations{0} {}
 
     void* allocate(unsigned int numOfBytes, unsigned int listIndex) {
         unsigned int old_offset = __sync_fetch_and_add(&m_offset, numOfBytes);
-        if (listIndex == 0) {
-            __sync_fetch_and_add(&m_chunk_allocations, 1);
-        }
-        else if (listIndex == 1) {
-            __sync_fetch_and_add(&m_ro_allocations, 1);
-        }
-        else {
+        if (listIndex < N) {
+            ATOMIC_FETCH_AND_INC_FULL(&m_allocations[listIndex]);
+            std::cout << "TID: " << getThreadId() << " Allocating the " << m_allocations[listIndex] <<  " chunk" << "\n";
+        } else {
             std::cout << "Error, allocating to an unidentified list" << std::endl;
             throw;
         }
@@ -42,19 +36,18 @@ public:
         // Do not release memory in mock
     }
 
-    unsigned int getNumOfChunkAllocs() {
-        return m_chunk_allocations;
+    unsigned int getNumOfAllocs(unsigned int listIndex) {
+        return m_allocations[listIndex];
     }
 
-    unsigned int getNumOfRoAllocs() {
-        return m_chunk_allocations;
+    void clear() {
+        memset(this, 0, sizeof(*this));
     }
 
-    char *m_buf;
+    char m_buf[MOCK_ALLOC_SIZE];
     volatile unsigned int m_offset;
-    volatile unsigned int m_chunk_allocations;
-    volatile unsigned int m_ro_allocations;
+    volatile unsigned int m_allocations[N];
 };
 
 
-#endif //KIWI_MOCKALLOCATOR_H
+#endif //__KIWI_MOCK_ALLOCATOR_H__

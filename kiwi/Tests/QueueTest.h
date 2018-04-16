@@ -1,16 +1,10 @@
-//
-// Created by Ynon on 10/04/2018.
-//
-
-#ifndef KIWI_QUEUETEST_H
-#define KIWI_QUEUETEST_H
+#ifndef __KIWI_QUEUETEST_H__
+#define __KIWI_QUEUETEST_H__
 
 #include <gtest/gtest.h>
 #include <memory>
 #include "KiwiPqMock.h"
 #include "../kiwiqueue/MockAllocator.h"
-
-extern MockAllocator s_allocator;
 
 template <typename T>
 class MockComparer {
@@ -18,13 +12,11 @@ public:
     bool operator()(const T& t1, const T& t2) const { return t1 < t2; }
 };
 
-using kiwipq_t = KiwiPQMock<MockComparer<int>, int, MockAllocator>;
+using kiwipq_t = KiwiPQMock<MockComparer<int>, MockAllocator<>, int>;
 
 class QueueTest : public testing::Test {
 public:
     QueueTest();
-
-    virtual void SetUp();
 
     virtual void TearDown();
 
@@ -37,4 +29,4 @@ protected:
     std::unique_ptr<kiwipq_t> m_pq;
 };
 
-#endif //KIWI_QUEUETEST_H
+#endif //__KIWI_QUEUETEST_H__

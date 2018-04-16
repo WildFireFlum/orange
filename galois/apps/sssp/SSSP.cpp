@@ -440,7 +440,7 @@ struct AsyncAlgo {
     typedef GlobPQ<UpdateRequest, kLSMQ<UpdateRequest, UpdateRequestIndexer<UpdateRequest>, 256>> kLSM256;
     typedef GlobPQ<UpdateRequest, kLSMQ<UpdateRequest, UpdateRequestIndexer<UpdateRequest>, 4096>> kLSM4096;
     typedef GlobPQ<UpdateRequest, LockFreeSkipList<Comparer, UpdateRequest>> GPQ;
-    typedef GlobPQ<UpdateRequest, KiWiPQ<Comparer, UpdateRequest, GaloisAllocator>> KIWIPQ;
+    typedef GlobPQ<UpdateRequest, KiWiPQ<Comparer, GaloisAllocator<>, UpdateRequest>> KIWIPQ;
     typedef GlobPQ<UpdateRequest, LockFreeSkipList<NodeComparer, UpdateRequest>> GPQ_NC;
     typedef GlobPQ<UpdateRequest, SprayList<NodeComparer, UpdateRequest>> SL;
     typedef GlobPQ<UpdateRequest, MultiQueue<Comparer, UpdateRequest, 1>> MQ1;

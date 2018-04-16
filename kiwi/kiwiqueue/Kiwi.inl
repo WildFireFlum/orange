@@ -7,9 +7,6 @@
 #include "Allocator.h"
 #include "Utils.h"
 
-#define KIWI_CHUNK_SIZE 1024
-#define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
-#define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
 
 template <class Comparer, typename K, uint32_t N>
 class KiwiChunk;
@@ -18,9 +15,10 @@ template <class Comparer, typename K, uint32_t N>
 class KiWiRebalancedObject;
 
 enum ChunkStatus {
-    INFANT_CHUNK = 0,
-    NORMAL_CHUNK = 1,
-    FROZEN_CHUNK = 2,
+    UNINITIALIZED_CHUNK = 0,
+    INFANT_CHUNK        = 1,
+    NORMAL_CHUNK        = 2,
+    FROZEN_CHUNK        = 3,
 };
 
 enum PPA_MASK {
@@ -30,20 +28,6 @@ enum PPA_MASK {
     FROZEN = 1 << 31,
 };
 
-template <typename T>
-inline bool is_marked(T* j) {
-    return ((uintptr_t)j & (uintptr_t)0x01) != 0;
-}
-
-template <typename T>
-inline T* unset_mark(T* j) {
-    return reinterpret_cast<T*>((uintptr_t)j & ~(uintptr_t)0x01);
-}
-
-template <typename T>
-inline T* set_mark(T* j) {
-    return reinterpret_cast<T*>((uintptr_t)j | (uintptr_t)0x01);
-}
 
 /**
  * The f
@@ -76,7 +60,7 @@ class KiWiRebalancedObject {
  * @tparam K        - Keys type
  * @tparam N        - Number of keys in a chunk
  */
-template <class Comparer, typename K, uint32_t N = KIWI_CHUNK_SIZE>
+template <class Comparer, typename K, uint32_t N>
 class KiwiChunk {
     using rebalance_object_t = KiWiRebalancedObject<Comparer, K, N>;
 
@@ -112,8 +96,8 @@ class KiwiChunk {
     /// The parent chunk during rebalacing (while this chunk is still INFANT)
     KiwiChunk<Comparer, K, N>* volatile parent;
 
-    /// Ponits to the rebalanced object that in win in the consensus at the
-    /// begging of rebalanced
+    /// Ponits to the rebalanced object that win in the consensus at the
+    /// begging of rebalanced (nullptr in initialization time
     rebalance_object_t* volatile ro;
 
     /// An array of indices to push or pop from the chunk, its size is equal to
@@ -122,27 +106,20 @@ class KiwiChunk {
     uint32_t volatile ppa[0];
 
     void init(unsigned int num_threads) {
-        // Used for debugging
-        element_t* const UNINITIALIZED =
-            reinterpret_cast<element_t* const>(0xdeadf00d & (~1));
-        begin_sentinel.next = unset_mark(&end_sentinel);
-        // The next of end_sentinel must not have its LSB on, otherwise find is
-        // not correct
-        end_sentinel.next = reinterpret_cast<element_t* const>(0xedde0000);
-        status = INFANT_CHUNK;
-        ppa_len = num_threads;
-        this->i = 0;
+        // clean memory (not including the dummy and ppa array)
+        memset((char*)this + sizeof(dummy), 0, sizeof(*this) - sizeof(dummy));
+
+        // initialize sentinels
+        begin_sentinel.next = &end_sentinel;
 
         // initialize ppa entries
+        ppa_len = num_threads;
         for (int j = 0; j < ppa_len; j++) {
             ppa[j] = IDLE;
         }
 
-        // initialize the elements struct
-        for (int j = 0; j < N; j++) {
-            k[j].next = UNINITIALIZED;
-            k[j].deleted = false;
-        }
+        // set status infant
+        status = INFANT_CHUNK;
     }
 
     /// Based on lock free list from "The art of multiprocessor programming"
@@ -161,6 +138,8 @@ class KiwiChunk {
 
             while (true) {
                 succ = curr->next;
+
+                // physically remove node from the beginning of the list marked nodes
                 while (is_marked(curr->next)) {
                     if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr),
                                        unset_mark(succ))) {
@@ -170,12 +149,14 @@ class KiwiChunk {
                     succ = curr->next;
                 }
 
+                // if we find the key (pred->key < key <= curr->key) or reached the end of the list than return
                 if (curr == &end_sentinel || !compare(curr->key, key)) {
                     out_prev = pred;
                     out_next = curr;
                     return;
                 }
 
+                // if succ is the end of the list we can return as well with curr as prev
                 if (unset_mark(succ) == &end_sentinel) {
                     out_prev = curr;
                     out_next = &end_sentinel;
@@ -241,7 +222,6 @@ class KiwiChunk {
         return false;
     }
 
-    // TODO: should be improved
     uint32_t get_keys_to_preserve_from_chunk(K (&arr)[N]) {
         if (status != FROZEN_CHUNK) {
             // invalid call
@@ -341,22 +321,6 @@ class KiwiChunk {
         }
     }
 
-    /// Prints the queue and counts its elements, used for debugging and is not
-    /// synchronized,
-    /// TODO: remove
-    unsigned int printAndCount() {
-        element_t* e = unset_mark(begin_sentinel.next);
-        unsigned int chunkCount = 0;
-        while (e != &end_sentinel) {
-            std::cout << reinterpret_cast<int>(e->key) << " -> ";
-            e = unset_mark(e->next);
-            chunkCount++;
-        }
-
-        std::cout << "\\\n count = " << chunkCount << "\n";
-        return chunkCount;
-    }
-
     /**
      * Counts the number of elements in a chunk, not synchronized
      * @note: Assumed to be run in a sequential manner
@@ -367,7 +331,7 @@ class KiwiChunk {
         unsigned int chunkCount = 0;
         while (e != &end_sentinel) {
             e = unset_mark(e->next);
-            chunkCount++;
+            if (!e->deleted) chunkCount++;
         }
         return chunkCount;
     }
@@ -377,49 +341,46 @@ class KiwiChunk {
 #include "GaloisAllocator.h"
 #endif
 
-template <typename Comparer, typename K, typename Allocator_t, uint32_t N>
+template <class Comparer, class Allocator, typename K, uint32_t N = KIWI_DEFAULT_CHUNK_SIZE>
 class KiWiPQ {
     using chunk_t = KiwiChunk<Comparer, K, N>;
     using rebalance_object_t = KiWiRebalancedObject<Comparer, K, N>;
 
    protected:
-    // keys comparator
+    /// Keys comparator
     Comparer compare;
 
-    Allocator_t* allocator;
+    /// Memory allocator - support memeory reclamation
+    Allocator allocator;
 
     /// The number of threads
     unsigned int num_of_threads;
 
-    // chunks
+    /// Chunks list sentinels
     chunk_t begin_sentinel;
     chunk_t end_sentinel;
     // LockFreeSkipListSet<Comparer, K, chunk_t*> index;
 
-    chunk_t* new_chunk() {
+    inline chunk_t* new_chunk() {
         // Second argument is an index of a freelist to use to reclaim
-        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator->allocate(
-            sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
+        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator.allocate(sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
         chunk->init(num_of_threads);
         return chunk;
     }
 
-    inline void reclaim_chunk(chunk_t* chunk) { allocator->reclaim(chunk, 0); }
+    inline void reclaim_chunk(chunk_t* chunk) { allocator.reclaim(chunk, 0); }
 
-    inline void delete_chunk(chunk_t* chunk) {
-        allocator->deallocate(chunk, 0);
-    }
+    inline void delete_chunk(chunk_t* chunk) { allocator.deallocate(chunk, 0); }
 
-    rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
-        rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(
-            allocator->allocate(sizeof(rebalance_object_t), 1));
+    inline rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
+        rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(allocator.allocate(sizeof(rebalance_object_t), 1));
         ro->init(f, n);
         return ro;
     }
 
-    void reclaim_ro(rebalance_object_t* ro) { allocator->reclaim(ro, 1); }
+    inline void reclaim_ro(rebalance_object_t* ro) { allocator.reclaim(ro, 1); }
 
-    void delete_ro(rebalance_object_t* ro) { allocator->deallocate(ro, 1); }
+    inline void delete_ro(rebalance_object_t* ro) { allocator.deallocate(ro, 1); }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
@@ -602,7 +563,7 @@ class KiWiPQ {
             if (!ATOMIC_CAS_MB(&(begin_sentinel.next),
                                unset_mark(&end_sentinel), unset_mark(chunk))) {
                 // add failed - delete chunk.
-                reclaim_chunk(chunk);
+                delete_chunk(chunk);
             }
             return locate_target_chunk(key);
         }
@@ -651,7 +612,7 @@ class KiWiPQ {
    public:
 #ifdef GALOIS
     KiWiPQ()
-        : allocator(new GaloisAllocator()),
+        : allocator(),
           begin_sentinel(),
           end_sentinel(),
           num_of_threads(getNumOfThreads()) {
@@ -659,11 +620,10 @@ class KiWiPQ {
     }
 #endif
 
-    KiWiPQ(Allocator_t* alloc,
-           const K& begin_key,
+    KiWiPQ(const K& begin_key,
            const K& end_key,
            unsigned int num_threads)
-        : allocator(alloc),
+        : allocator(),
           begin_sentinel(),
           end_sentinel(),
           num_of_threads(num_threads) {
@@ -719,25 +679,6 @@ class KiWiPQ {
             chunk = unset_mark(chunk->next);
         }
         return false;
-    }
-
-    /// Prints the queue and counts its elements, used for debugging and is not
-    /// synchronized
-    /// TODO: remove
-    unsigned int printAndCount() {
-        std::cout << "\n pq state:\n";
-        chunk_t* chunk = unset_mark(begin_sentinel.next);
-        int inChunkCount = 0;
-        unsigned int totalCount = 0;
-        while (chunk != &end_sentinel) {
-            std::cout << "(" << inChunkCount++ << " - " << chunk << " ) ";
-            totalCount += chunk->printAndCount();
-            chunk = unset_mark(chunk->next);
-        }
-        std::cout << "total count " << totalCount << "\n";
-        std::cout << "\n-------------\n\n";
-
-        return totalCount;
     }
 
     /**

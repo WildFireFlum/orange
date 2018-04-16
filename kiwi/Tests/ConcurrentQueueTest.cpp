@@ -1,7 +1,3 @@
-//
-// Created by Ynon on 26/03/2018.
-//
-
 #include "QueueTest.h"
 
 #ifndef __linux__
@@ -18,7 +14,7 @@ class ConcurrentQueueTest : public QueueTest {
 
     virtual void SetUp() {
         QueueTest::SetUp();
-        m_pq.reset(new kiwipq_t(&s_allocator, -13371337, 13371337, numOfThreads));
+        m_pq.reset(new kiwipq_t(-13371337, 13371337, numOfThreads));
     }
 
    protected:
