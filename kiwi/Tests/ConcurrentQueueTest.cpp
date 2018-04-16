@@ -8,13 +8,13 @@
 
 class ConcurrentQueueTest : public QueueTest {
    public:
-    ConcurrentQueueTest() = default;
-
-    static int numOfThreads;
+    ConcurrentQueueTest() {
+        numberOfThreads = 8;
+    }
 
     virtual void SetUp() {
         QueueTest::SetUp();
-        m_pq.reset(new kiwipq_t(-13371337, 13371337, numOfThreads));
+        m_pq.reset(new kiwipq_t(-13371337, 13371337));
     }
 
    protected:
@@ -51,17 +51,15 @@ class ConcurrentQueueTest : public QueueTest {
     }
 };
 
-int ConcurrentQueueTest::numOfThreads = 8;
-
 TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
     const auto num_of_pushes = (KIWI_TEST_CHUNK_SIZE * 64) + 1;
     // Make sure no duplicate values
-    const auto min_val = (num_of_pushes / numOfThreads) + 1;
+    const auto min_val = (num_of_pushes / getNumOfThreads()) + 1;
     auto total_inserted = 0;
 
     std::vector<std::thread> threads;
-    for (auto i = 0; i < numOfThreads; i++) {
-        const auto to_insert = num_of_pushes / numOfThreads;
+    for (auto i = 0; i < getNumOfThreads(); i++) {
+        const auto to_insert = num_of_pushes / getNumOfThreads();
         threads.push_back(spawnPushingThread(to_insert, min_val * i));
         total_inserted += to_insert;
     }
@@ -96,7 +94,7 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
     EXPECT_EQ(getQueue().getRebalanceCount(), 0);
 
     std::vector<std::thread> threads;
-    for (auto i = 0; i < numOfThreads; i++) {
+    for (auto i = 0; i < getNumOfThreads(); i++) {
         threads.emplace_back(pushNumber);
     }
 
@@ -105,7 +103,7 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
     }
 
     // Make sure that all items were pushed
-    EXPECT_GT(getQueue().getRebalanceCount(), 1);
+    EXPECT_EQ(getQueue().getRebalanceCount(), 1);
     EXPECT_EQ(getQueue().getNumOfChunks(), 2);
     std::cout << "Rebalance count: " << getQueue().getRebalanceCount() << "\n";
 }
@@ -113,8 +111,8 @@ TEST_F(ConcurrentQueueTest, TestConcurrentRebalances) {
 TEST_F(ConcurrentQueueTest, TestStressPushPop) {
     const auto num_of_pushes = KIWI_TEST_CHUNK_SIZE * 128;
     const auto num_of_pops = KIWI_TEST_CHUNK_SIZE * 64;
-    const auto num_of_popping_threads = numOfThreads * 0.50;
-    const auto num_of_pushing_threads = numOfThreads * 0.50;
+    const auto num_of_popping_threads = getNumOfThreads() * 0.50;
+    const auto num_of_pushing_threads = getNumOfThreads() * 0.50;
 
     getQueue().setShouldUsePolicy(true);
     // Make sure no duplicate values

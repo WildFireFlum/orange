@@ -3,11 +3,13 @@
 
 class SequentialQueueTest : public QueueTest {
    public:
-    SequentialQueueTest() = default;
+    SequentialQueueTest() {
+        numberOfThreads = 1;
+    }
 
     virtual void SetUp() {
         QueueTest::SetUp();
-        m_pq.reset(new kiwipq_t(-13371337, 13371337, 1));
+        m_pq.reset(new kiwipq_t(-13371337, 13371337));
     }
 };
 

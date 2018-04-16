@@ -21,11 +21,8 @@ class KiwiPQMock : public KiWiPQ<Comparer, Allocator, K, N> {
 
    public:
     KiwiPQMock(const K& begin_key,
-               const K& end_key,
-               unsigned int num_threads)
-        : KiWiPQ<Comparer, Allocator, K, N>(begin_key,
-                                           end_key,
-                                           num_threads),
+               const K& end_key)
+        : KiWiPQ<Comparer, Allocator, K, N>(begin_key, end_key),
           num_of_rebalances(0), should_use_policy(false) {}
 
     unsigned int getRebalanceCount() { return num_of_rebalances; }

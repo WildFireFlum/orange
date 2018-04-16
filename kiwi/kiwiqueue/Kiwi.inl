@@ -2,7 +2,8 @@
 #define __GALOIS_KIWI_H__
 
 #include <algorithm>
-#include <iostream>
+#include <cstdint>
+#include <stdint-gcc.h>
 
 #include "Allocator.h"
 #include "Utils.h"
@@ -353,9 +354,6 @@ class KiWiPQ {
     /// Memory allocator - support memeory reclamation
     Allocator allocator;
 
-    /// The number of threads
-    unsigned int num_of_threads;
-
     /// Chunks list sentinels
     chunk_t begin_sentinel;
     chunk_t end_sentinel;
@@ -363,6 +361,7 @@ class KiWiPQ {
 
     inline chunk_t* new_chunk() {
         // Second argument is an index of a freelist to use to reclaim
+        unsigned int num_of_threads = getNumOfThreads();
         chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator.allocate(sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
         chunk->init(num_of_threads);
         return chunk;
@@ -478,15 +477,11 @@ class KiWiPQ {
 
         if (Cn->i > 0) {
             // we need to close the last chunk as well
-            Cn->min_key =
-                Cn->k[0].key;  // set Cn min key - this value won't be change
-            Cn->begin_sentinel.next =
-                &Cn->k[0];  // connect begin sentinel to the list
-            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by
-                                                          // point the last key
-                                                          // to the end sentinel
+            Cn->min_key = Cn->k[0].key;                   // set Cn min key - this value won't be change
+            Cn->begin_sentinel.next = &Cn->k[0];          // connect begin sentinel to the list
+            Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);  // close the list by pointing the last key to the end sentinel
         } else {
-            // all the chunks in ro are empty
+            // all the chunks are empty - delete the new chunk and set is_empty flag
             delete_chunk(Cn);
             Cf = Cn = nullptr;
             is_empty = true;
@@ -503,7 +498,6 @@ class KiWiPQ {
         }
 
         do {
-            // TODO: should validate this part ...
             chunk_t* pred = load_prev(ro->first);
 
             if (pred == nullptr) {
@@ -551,9 +545,7 @@ class KiWiPQ {
     }
 
     chunk_t* locate_target_chunk(const K& key) {
-        chunk_t* c = &begin_sentinel;  // index.get(key);
-        chunk_t* next = unset_mark(c->next);
-        if (next == &end_sentinel) {
+        if (begin_sentinel.next == &end_sentinel) {
             // the chunk list is empty, we need to create a chunk
             chunk_t* chunk = new_chunk();
             chunk->min_key = key;  // set chunk's min key
@@ -565,8 +557,10 @@ class KiWiPQ {
                 // add failed - delete chunk.
                 delete_chunk(chunk);
             }
-            return locate_target_chunk(key);
         }
+
+        chunk_t* c = &begin_sentinel;  // index.get(key);
+        chunk_t* next = unset_mark(c->next);
 
         while (next != &end_sentinel && !compare(key, next->min_key)) {
             c = next;
@@ -621,12 +615,10 @@ class KiWiPQ {
 #endif
 
     KiWiPQ(const K& begin_key,
-           const K& end_key,
-           unsigned int num_threads)
+           const K& end_key)
         : allocator(),
           begin_sentinel(),
-          end_sentinel(),
-          num_of_threads(num_threads) {
+          end_sentinel() {
         begin_sentinel.next = &end_sentinel;
         begin_sentinel.min_key = begin_key;
         end_sentinel.min_key = end_key;

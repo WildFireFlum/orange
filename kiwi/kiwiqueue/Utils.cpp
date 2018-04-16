@@ -1,23 +1,28 @@
-//
-// Created by Ynon on 10/04/2018.
-//
-
 #include "Utils.h"
 
+#define FAKETID 0xdeaddaed
+
+class NextId {
+public:
+    unsigned next();
+};
+
+unsigned numberOfThreads = 1;
 unsigned nextID = 0;
-NextId next;
-__thread unsigned TID = FAKETID;
+static NextId next;
+static __thread unsigned TID = FAKETID;
+
+inline unsigned NextId::next() {
+    return ATOMIC_FETCH_AND_INC_FULL(&nextID);
+}
+
 
 unsigned int getNumOfThreads() {
 #ifdef GALOIS
     return Galois::Runtime::activeThreads;
 #else
-    return NUMOFTHREADS;
+    return numberOfThreads;
 #endif
-}
-
-unsigned NextId::next() {
-    return __sync_fetch_and_add(&nextID, 1);
 }
 
 unsigned int getThreadId() {
