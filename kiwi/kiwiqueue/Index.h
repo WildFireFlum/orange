@@ -8,10 +8,9 @@
 #include <cstdlib>
 #include "Utils.h"
 
-#ifndef GALOIS
 // check cache alignment
-template<typename K,typename V>
-struct SkipListSetNode {
+template<typename K, typename V>
+struct IndexNode {
 public:
     // dummy field which is used by the heap when the node is freed.
     // (without it, freeing a node would corrupt a field, possibly affecting
@@ -22,9 +21,9 @@ public:
     V val;
 
     int toplevel;
-    SkipListSetNode* volatile next[0];
+    IndexNode* volatile next[0];
 
-    void init(int _t, SkipListSetNode *_next) {
+    void init(int _t, IndexNode *_next) {
         toplevel = _t;
         for (int i = 0; i < _t; i++)
             next[i] = _next;
@@ -32,20 +31,21 @@ public:
 
 };
 
-#endif
-
 template<class Comparer, class Allocator, typename K, typename V>
 class Index {
 
-private:
-    typedef SkipListSetNode<K,V> sl_node_t;
-    Comparer compare;
-    Allocator& allocator;
+protected:
+    typedef IndexNode<K, V> sl_node_t;
 
-public:
+    Allocator& allocator;
+    Comparer compare;
+
     sl_node_t* head;
     uint8_t levelmax;
 
+
+    static __thread unsigned long seeds[3];
+    static __thread bool seeds_init;
 
     //Marsaglia's xorshf generator
     static inline unsigned long xorshf96(unsigned long* x, unsigned long* y, unsigned long* z)  //period 2^96-1
@@ -62,9 +62,6 @@ public:
 
         return *z;
     }
-
-    static __thread unsigned long seeds[3];
-    static __thread bool seeds_init;
 
 public:
     static inline long rand_range(long r)
@@ -83,7 +80,7 @@ public:
         return v;
     }
 
-private:
+protected:
     void mark_node_ptrs(sl_node_t *n)
     {
         sl_node_t *n_next;
@@ -102,35 +99,36 @@ private:
         }
     }
 
-
     inline sl_node_t *sl_new_node(int levelmax, sl_node_t *next) {
-        sl_node_t *node = reinterpret_cast<sl_node_t *>(allocator.allocate(sizeof(sl_node_t) + levelmax*sizeof(sl_node_t*), levelmax-1));
+        auto *node = reinterpret_cast<sl_node_t *>(allocator.allocate(sizeof(sl_node_t) + levelmax*sizeof(sl_node_t*), levelmax-1));
         node->init(levelmax, next);
         return node;
     }
 
     inline sl_node_t *sl_new_node_key(K key, V val, int levelmax) {
-        sl_node_t *node = sl_new_node(levelmax, 0);
+        auto *node = sl_new_node(levelmax, 0);
         node->key = key;
         node->val = val;
         return node;
     }
 
-    inline void sl_delete_node(sl_node_t *n) {
-        allocator.deallocate(n, n->toplevel-1);
+    inline void sl_reclaim_node(sl_node_t *n) {
+        allocator.reclaim(n, n->toplevel-1);
     }
 
 public:
-    Index(Allocator& r_allocator) : allocator(r_allocator), levelmax(22) {
+
+    Index(Allocator& r_allocator, const V& val) : allocator(r_allocator), levelmax(INDEX_SKIPLIST_LEVELS) {
         sl_node_t *min, *max;
 
         max = sl_new_node(levelmax, NULL);
         min = sl_new_node(levelmax, max);
 
         head = min;
+        head->val = val;
     }
 
-    void fraser_search(K key, sl_node_t **left_list, sl_node_t **right_list, sl_node_t *dead)
+    void fraser_search(const K& key, sl_node_t **left_list, sl_node_t **right_list, sl_node_t *dead)
     {
         sl_node_t *left, *left_next, *right, *right_next;
         int i;
@@ -139,6 +137,8 @@ public:
         left = head;
         for (i = (dead ? dead->toplevel : levelmax) - 1; i >= 0; i--)
         {
+            sl_node_t *first = NULL;
+
             left_next = left->next[i];
             if (is_marked(left_next))
                 goto retry;
@@ -154,17 +154,29 @@ public:
                     right = unset_mark(right_next);
                 }
                 /* Ensure left and right nodes are adjacent */
-                if ((left_next != right) &&
-                    !ATOMIC_CAS_MB(&left->next[i], left_next, right))
-                    goto retry;
+                if (left_next != right) {
+                    if (!ATOMIC_CAS_MB(&left->next[i], left_next, right))
+                        goto retry;
+                    for (sl_node_t *t = left_next; t != right; t = unset_mark(t->next[i]))
+                        t->next[i] = set_dead(t->next[i]);
+                }
                 /* When deleting, we have to keep going until we find our target node, or until
                    we observe it has been deleted (right->key > key).  Once this happens, however,
                    we need to descend to a node whose key is smaller than our target's, otherwise
                    we might miss our target in the level below.  (Consider N1 and N2 with the same
                    key, where on level 1, N1 -> N2 but on level 0, N2 -> N1; if when looking for N2
                    we descend at N1, we'll miss N2 at level 0.) */
-                if (!right_next || !compare(key, right->key))
-                    break;
+                if (!dead) {
+                    if (!right_next || !compare(key, right->key))
+                        break;
+                } else {
+                    if (!first && !compare(key, right->key))
+                        first = left;
+                    if (!right_next || is_dead(dead->next[i]) || compare(right->key, key)) {
+                        if (first) left = first;
+                        break;
+                    }
+                }
                 left = right;
                 left_next = right_next;
             }
@@ -189,177 +201,126 @@ public:
         return level;
     }
 
-    V get(const K& key) {
-        sl_node_t *succs[levelmax], *preds[levelmax];
-
-        fraser_search(key, preds, succs, NULL);
-        if (succs[0]->next[0] && succs[0]->key == key)
-            return succs[0]->val;
-        return static_cast<V>(0);
-    }
-
-    sl_node_t* lower_bound(const K& key) {
-        sl_node_t *succs[levelmax], *preds[levelmax];
-
-        fraser_search(key, preds, succs, NULL);
-        return succs[0];
-    }
-
-    bool pop(sl_node_t* node) {
-        sl_node_t *first, *next;
+    bool push_conditional(const K& key, const V& prev, const V& val)
+    {
+        sl_node_t *newn, *new_next, *pred, *succ, *succs[levelmax], *preds[levelmax];
         bool result;
 
-        next = node->next[0];
-        if (!next || !ATOMIC_CAS_MB(&node->next[0], next, set_mark(next)))
+        newn = sl_new_node_key(key, val, get_rand_level());
+
+        retry:
+        fraser_search(key, preds, succs, NULL);
+        if (/*succs[0]->key == key ||*/ preds[0]->val != prev)
+        {                             /* Value already in list */
+            result = false;
+            sl_reclaim_node(newn);
+            goto end;
+        }
+
+        for (int i = 0; i < newn->toplevel; i++)
+        {
+            newn->next[i] = succs[i];
+        }
+
+        /* Node is visible once inserted at lowest level */
+        if (!ATOMIC_CAS_MB(&preds[0]->next[0], succs[0], newn))
+        {
+            goto retry;
+        }
+
+        for (int i = 1; i < newn->toplevel; i++)
+        {
+            while (true)
+            {
+                pred = preds[i];
+                succ = succs[i];
+                new_next = newn->next[i];
+                /* Give up if pointer is marked */
+                if (is_marked(new_next))
+                    goto success;
+                /* Update the forward pointer if it is stale, which can happen
+                   if we called search again to update preds and succs. */
+                if (new_next != succ && !ATOMIC_CAS_MB(&newn->next[i], new_next, succ))
+                    goto success;
+                /* We retry the search if the CAS fails */
+                if (ATOMIC_CAS_MB(&pred->next[i], succ, newn)) {
+                    if (is_marked(newn->next[i])) {
+                        fraser_search(key, NULL, NULL, newn);
+                        goto success;
+                    }
+                    break;
+                }
+
+                fraser_search(key, preds, succs, NULL);
+            }
+        }
+
+    success:
+        result = true;
+
+    end:
+        return result;
+    }
+
+
+    bool complete_pop(sl_node_t *first)
+    {
+        sl_node_t *next = first->next[0];
+
+        if (is_marked(next) ||
+            !ATOMIC_CAS_MB(&first->next[0], next, set_mark(next)))
             return false;
 
-        mark_node_ptrs(node);
+        mark_node_ptrs(first);
 
-        fraser_search(node->key, NULL, NULL, node);
-        sl_delete_node(node);
+        fraser_search(first->key, NULL, NULL, first);
+        sl_reclaim_node(first);
 
         return true;
     }
 
-    bool push(const K& key, const V& val)
-    {
-        sl_node_t *newn, *new_next, *pred, *succ, *succs[levelmax], *preds[levelmax];
-        int i, result = 0;
-
-        newn = sl_new_node_key(key, val, get_rand_level());
-
-        retry:
-        fraser_search(key, preds, succs, NULL);
-        if (succs[0]->key == key)
-        {                             /* Value already in list */
-            result = 0;
-            sl_delete_node(newn);
-            goto end;
-        }
-
-        for (i = 0; i < newn->toplevel; i++)
-        {
-            newn->next[i] = succs[i];
-        }
-
-        /* Node is visible once inserted at lowest level */
-        if (!ATOMIC_CAS_MB(&preds[0]->next[0], succs[0], newn))
-        {
-            goto retry;
-        }
-
-        for (i = 1; i < newn->toplevel; i++)
-        {
-            while (1)
-            {
-                pred = preds[i];
-                succ = succs[i];
-                new_next = newn->next[i];
-                /* Give up if pointer is marked */
-                if (is_marked(new_next))
-                    goto success;
-                /* Update the forward pointer if it is stale, which can happen
-                   if we called search again to update preds and succs. */
-                if (new_next != succ && !ATOMIC_CAS_MB(&newn->next[i], new_next, succ))
-                    goto success;
-                /* We retry the search if the CAS fails */
-                if (ATOMIC_CAS_MB(&pred->next[i], succ, newn)) {
-                    if (is_marked(newn->next[i])) {
-                        fraser_search(key, NULL, NULL, newn);
-                        goto success;
-                    }
-                    break;
-                }
-
-                fraser_search(key, preds, succs, NULL);
-            }
-        }
-
-        success:
-        result = 1;
-
-        end:
-        return result;
-    }
-
-
-    V get_pred(const K& key) {
+    V& get_pred(const K& key) {
         sl_node_t *succs[levelmax], *preds[levelmax];
-
-        fraser_search(key, preds, succs, NULL);
+        fraser_search(key, preds, succs, nullptr);
         return preds[0]->val;
     }
 
-    // pop the node associated with the given key only if the node's value is equal to condition
-    bool pop_conditional(const K& key, const V& condition) {
+    V get_pred(const K& key, const V& val) {
+        sl_node_t *succs[levelmax], *preds[levelmax], *pred, *succ;
+
+        fraser_search(key, preds, succs, nullptr);
+
+        pred = preds[0];
+        succ = pred->next[0];
+
+        while (succ && is_marked(succ) && succ->val != val && succ->key == key) {
+            pred = unset_mark(succ);
+            succ = pred->next[0];
+        }
+        if (succ == nullptr || succ->val != val) {
+            return static_cast<V>(0);
+        }
+
+        return pred->val;
+    }
+
+    bool pop_conditional(const K& key, const V& val) {
         sl_node_t *succs[levelmax], *preds[levelmax];
-
-        fraser_search(key, preds, succs, NULL);
-        if (succs[0]->next[0] && succs[0]->key == key && succs[0]->val == condition) {
-            return pop(succs[0]);
+        fraser_search(key, preds, succs, nullptr);
+        if (succs[0]->next[0] && succs[0]->key == key && succs[0]->val == val) {
+            return complete_pop(succs[0]);
         }
-        return false;
     }
 
-    bool push_conditional(const K& key, const V& condition, const V& val) {
-        sl_node_t *newn, *new_next, *pred, *succ, *succs[levelmax], *preds[levelmax];
-        int i, result = 0;
-
-        newn = sl_new_node_key(key, val, get_rand_level());
-
-        retry:
-        fraser_search(key, preds, succs, NULL);
-        if ((succs[0]->next[0] && succs[0]->key == key) || (preds[0]->val != condition))
-        {                             /* Value already in list - or pred's value is not equal to condition*/
-            result = 0;
-            sl_delete_node(newn);
-            goto end;
+    void print() {
+        auto ptr = head;
+        while (unset_mark(ptr->next[0])) {
+            std::cout << ptr->key << " " << ptr->val << std::endl;
+            ptr = unset_mark(ptr->next[0]);
         }
 
-        for (i = 0; i < newn->toplevel; i++)
-        {
-            newn->next[i] = succs[i];
-        }
-
-        /* Node is visible once inserted at lowest level */
-        if (!ATOMIC_CAS_MB(&preds[0]->next[0], succs[0], newn))
-        {
-            goto retry;
-        }
-
-        for (i = 1; i < newn->toplevel; i++)
-        {
-            while (1)
-            {
-                pred = preds[i];
-                succ = succs[i];
-                new_next = newn->next[i];
-                /* Give up if pointer is marked */
-                if (is_marked(new_next))
-                    goto success;
-                /* Update the forward pointer if it is stale, which can happen
-                   if we called search again to update preds and succs. */
-                if (new_next != succ && !ATOMIC_CAS_MB(&newn->next[i], new_next, succ))
-                    goto success;
-                /* We retry the search if the CAS fails */
-                if (ATOMIC_CAS_MB(&pred->next[i], succ, newn)) {
-                    if (is_marked(newn->next[i])) {
-                        fraser_search(key, NULL, NULL, newn);
-                        goto success;
-                    }
-                    break;
-                }
-
-                fraser_search(key, preds, succs, NULL);
-            }
-        }
-
-        success:
-        result = 1;
-
-        end:
-        return result;
     }
+
 };
 
 template<class Comparer, class Allocator, typename K, typename V>
@@ -367,6 +328,5 @@ __thread unsigned long Index<Comparer, Allocator, K, V>::seeds[3];
 
 template<class Comparer, class Allocator, typename K, typename V>
 __thread bool Index<Comparer, Allocator, K, V>::seeds_init;
-
 
 #endif //__KIWI_SKIP_LIST_SET_H__

@@ -14,15 +14,13 @@ template <uint32_t N=24>
 class MockAllocator : public Allocator {
 public:
 
-    MockAllocator() : m_buf{0}, m_offset(0), m_allocations{0} {
-        printf("\\n\n\n\n\n....................................\\n\n\n\n");
-    }
+    MockAllocator() : m_buf{0}, m_offset(0), m_allocations{0} {}
 
     void* allocate(unsigned int numOfBytes, unsigned int listIndex) {
         unsigned int old_offset = __sync_fetch_and_add(&m_offset, numOfBytes);
         if (listIndex < N) {
             ATOMIC_FETCH_AND_INC_FULL(&m_allocations[listIndex]);
-            std::cout << getThreadId() << ") counters["<<listIndex <<"] = " << m_allocations[listIndex] <<  std::endl;
+            //std::cout << getThreadId() << ") counters["<<listIndex <<"] = " << m_allocations[listIndex] << " --- offset " << m_offset <<  std::endl;
         } else {
             std::cout << "Error, allocating to an unidentified list" << std::endl;
             throw;
