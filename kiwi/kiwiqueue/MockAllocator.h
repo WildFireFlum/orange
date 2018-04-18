@@ -10,7 +10,7 @@
 /**
  * A fixed size non-releasable synchronized buffer
  */
-template <uint32_t N=2>
+template <uint32_t N=24>
 class MockAllocator : public Allocator {
 public:
 
@@ -20,7 +20,7 @@ public:
         unsigned int old_offset = __sync_fetch_and_add(&m_offset, numOfBytes);
         if (listIndex < N) {
             ATOMIC_FETCH_AND_INC_FULL(&m_allocations[listIndex]);
-            std::cout << "TID: " << getThreadId() << " Allocating the " << m_allocations[listIndex] <<  " chunk" << "\n";
+            std::cout << getThreadId() << ") counters["<<listIndex <<"] = " << m_allocations[listIndex] <<  std::endl;
         } else {
             std::cout << "Error, allocating to an unidentified list" << std::endl;
             throw;

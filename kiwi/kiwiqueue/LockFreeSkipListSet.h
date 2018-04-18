@@ -232,7 +232,7 @@ public:
 
         retry:
         fraser_search(key, preds, succs, NULL);
-        if (succs[0]->next[0] && succs[0]->key == key)
+        if (succs[0]->key == key)
         {                             /* Value already in list */
             result = 0;
             sl_delete_node(newn);
@@ -365,6 +365,18 @@ public:
 
         end:
         return result;
+    }
+
+    void print() {
+        sl_node_t* n = (head->next)[0];
+        int inChunkCount = 0;
+        unsigned int totalCount = 0;
+        while (n) {
+
+            std::cout << n->key << " -> ";
+            n = unset_mark(n->next)[0];
+        }
+        std::cout << " \\" << std::endl;
     }
 
 };

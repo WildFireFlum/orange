@@ -1,9 +1,5 @@
-//
-// Created by Ynon on 11/04/2018.
-//
-
-#ifndef KIWI_KIWIPQMOCK_H
-#define KIWI_KIWIPQMOCK_H
+#ifndef __KIWI_KIWIPQMOCK_H__
+#define __KIWI_KIWIPQMOCK_H__
 
 #include "../kiwiqueue/Kiwi.inl"
 #ifndef __linux__
@@ -61,4 +57,4 @@ class KiwiPQMock : public KiWiPQ<Comparer, Allocator, K, N> {
     volatile unsigned int num_of_rebalances;
 };
 
-#endif  // KIWI_KIWIPQMOCK_H
+#endif  // __KIWI_KIWIPQMOCK_H__

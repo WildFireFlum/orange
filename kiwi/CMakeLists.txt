@@ -15,7 +15,7 @@ set(SOURCE_FILES
         kiwiqueue/Utils.cpp
         kiwiqueue/Allocator.h
         kiwiqueue/MockAllocator.h
-        kiwiqueue/SkipListSet.h
+        kiwiqueue/LockFreeSkipListSet.h
         Tests/QueueTest.h
         Tests/QueueTest.cpp
         Tests/SequentialQueueTest.cpp
