@@ -6,7 +6,7 @@
 #include <stdint-gcc.h>
 
 #include "Utils.h"
-#include "LockFreeSkipListSet.h"
+#include "Index.h"
 
 
 template <class Comparer, typename K, uint32_t N>
@@ -357,30 +357,30 @@ class KiWiPQ {
     chunk_t end_sentinel;
 
     /// shortcut to reach a required chunk (instedof traversing the entire list)
-    LockFreeSkipListSet<Comparer, Allocator, K, chunk_t*> index;
+    Index<Comparer, Allocator, K, chunk_t*> index;
 
     inline chunk_t* new_chunk(chunk_t* parent) {
         // Second argument is an index of a freelist to use to reclaim
         unsigned int num_of_threads = getNumOfThreads();
-        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator.allocate(sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 0));
+        chunk_t* chunk = reinterpret_cast<chunk_t*>(allocator.allocate(sizeof(chunk_t) + sizeof(uint32_t) * num_of_threads, 23));
         chunk->init(num_of_threads);
         chunk->parent = parent;
         return chunk;
     }
 
-    inline void reclaim_chunk(chunk_t* chunk) { allocator.reclaim(chunk, 0); }
+    inline void reclaim_chunk(chunk_t* chunk) { allocator.reclaim(chunk, 23); }
 
-    inline void delete_chunk(chunk_t* chunk) { allocator.deallocate(chunk, 0); }
+    inline void delete_chunk(chunk_t* chunk) { allocator.deallocate(chunk, 23); }
 
     inline rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
-        rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(allocator.allocate(sizeof(rebalance_object_t), 1));
+        rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(allocator.allocate(sizeof(rebalance_object_t), 22));
         ro->init(f, n);
         return ro;
     }
 
-    inline void reclaim_ro(rebalance_object_t* ro) { allocator.reclaim(ro, 1); }
+    inline void reclaim_ro(rebalance_object_t* ro) { allocator.reclaim(ro, 22); }
 
-    inline void delete_ro(rebalance_object_t* ro) { allocator.deallocate(ro, 1); }
+    inline void delete_ro(rebalance_object_t* ro) { allocator.deallocate(ro, 22); }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
@@ -628,8 +628,9 @@ class KiWiPQ {
         : allocator(),
           begin_sentinel(),
           end_sentinel(),
-          index(){
+          index(allocator){
         begin_sentinel.next = &end_sentinel;
+        index.head->val = &begin_sentinel;
     }
 #endif
 
@@ -638,7 +639,7 @@ class KiWiPQ {
         : allocator(),
           begin_sentinel(),
           end_sentinel(),
-          index(){
+          index(allocator){
         begin_sentinel.next = &end_sentinel;
         begin_sentinel.min_key = begin_key;
         end_sentinel.min_key = end_key;

@@ -14,7 +14,9 @@ template <uint32_t N=24>
 class MockAllocator : public Allocator {
 public:
 
-    MockAllocator() : m_buf{0}, m_offset(0), m_allocations{0} {}
+    MockAllocator() : m_buf{0}, m_offset(0), m_allocations{0} {
+        printf("\\n\n\n\n\n....................................\\n\n\n\n");
+    }
 
     void* allocate(unsigned int numOfBytes, unsigned int listIndex) {
         unsigned int old_offset = __sync_fetch_and_add(&m_offset, numOfBytes);

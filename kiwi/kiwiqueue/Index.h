@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include "Utils.h"
 
+#ifndef GALOIS
 // check cache alignment
 template<typename K,typename V>
 struct SkipListSetNode {
@@ -31,13 +32,15 @@ public:
 
 };
 
+#endif
+
 template<class Comparer, class Allocator, typename K, typename V>
-class LockFreeSkipListSet {
+class Index {
 
 private:
     typedef SkipListSetNode<K,V> sl_node_t;
     Comparer compare;
-    Allocator allocator;
+    Allocator& allocator;
 
 public:
     sl_node_t* head;
@@ -118,7 +121,7 @@ private:
     }
 
 public:
-    LockFreeSkipListSet() : allocator(), levelmax(23) {
+    Index(Allocator& r_allocator) : allocator(r_allocator), levelmax(22) {
         sl_node_t *min, *max;
 
         max = sl_new_node(levelmax, NULL);
@@ -360,10 +363,10 @@ public:
 };
 
 template<class Comparer, class Allocator, typename K, typename V>
-__thread unsigned long LockFreeSkipListSet<Comparer, Allocator, K, V>::seeds[3];
+__thread unsigned long Index<Comparer, Allocator, K, V>::seeds[3];
 
 template<class Comparer, class Allocator, typename K, typename V>
-__thread bool LockFreeSkipListSet<Comparer, Allocator, K, V>::seeds_init;
+__thread bool Index<Comparer, Allocator, K, V>::seeds_init;
 
 
 #endif //__KIWI_SKIP_LIST_SET_H__
