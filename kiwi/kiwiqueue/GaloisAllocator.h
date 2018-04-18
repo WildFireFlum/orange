@@ -8,22 +8,24 @@ public:
     GaloisAllocator() : term(Runtime::getSystemTermination()) {}
 
     inline void* allocate(unsigned int numOfBytes, unsigned int listIndex) {
-        return reinterpret_cast<void*>(heaps[term.getEpoch() % 3].allocate(numOfBytes, listIndex));
+        return reinterpret_cast<void*>(heap[term.getEpoch() % 3].allocate(numOfBytes, listIndex));
     }
 
     inline void deallocate(void* ptr, unsigned int listIndex) {
-        heaps[term.getEpoch() % 3].deallocate(ptr, listIndex);
+        heap[term.getEpoch() % 3].deallocate(ptr, listIndex);
     }
 
     inline void reclaim(void* ptr, unsigned int listIndex) {
-        heaps[(term.getEpoch() + 2)% 3].deallocate(ptr, listIndex);
+        heap[(term.getEpoch() + 2)% 3].deallocate(ptr, listIndex);
     }
 
 private:
     // memory reclamation mechanism
-
-    Runtime::MM::ListNodeHeap heaps[3];
+    static Runtime::MM::ListNodeHeap heap[3];
     Runtime::TerminationDetection& term;
+
 };
+
+Runtime::MM::ListNodeHeap GaloisAllocator::heap[3];
 
 #endif //__KIWI_GALOIS_ALLOCATOR_H__
