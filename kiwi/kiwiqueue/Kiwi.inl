@@ -23,10 +23,10 @@ enum ChunkStatus {
 };
 
 enum PPA_MASK {
-    IDLE = (1 << 29) - 1,
-    POP = 1 << 29,
-    PUSH = 1 << 30,
-    FROZEN = 1 << 31,
+    IDLE                = (1 << 29) - 1 ,
+    POP                 = 1 << 29       ,
+    PUSH                = 1 << 30       ,
+    FROZEN              = 1 << 31       ,
 };
 
 
@@ -42,11 +42,9 @@ class KiWiRebalancedObject {
     // a concurrent traversal.)
     void* dummy;
 
-    KiwiChunk<Comparer, K, N>* volatile first;  // the first chunk share this
-                                                // object
-    KiwiChunk<Comparer, K, N>* volatile next;   // next potential chunk - nullptr
-                                                // when the engagement stage is
-                                                // over
+    KiwiChunk<Comparer, K, N>* volatile first;  // the first chunk share this object
+    KiwiChunk<Comparer, K, N>* volatile next;   // next potential chunk - nullptr or &end_sentinel
+                                                // when the engagement stage is over
 
     void init(KiwiChunk<Comparer, K, N>* f, KiwiChunk<Comparer, K, N>* n) {
         first = f;
@@ -336,20 +334,6 @@ class KiwiChunk {
         }
         return chunkCount;
     }
-
-    unsigned int print() {
-        element_t* e = unset_mark(begin_sentinel.next);
-        unsigned int chunkCount = 0;
-        while (e != &end_sentinel) {
-            if (!e->deleted) {
-                chunkCount++;
-                std::cout << e->key << " -> ";
-            }
-            e = unset_mark(e->next);
-        }
-        std::cout << "\\";
-        return chunkCount;
-    }
 };
 
 #ifdef GALOIS
@@ -365,12 +349,14 @@ class KiWiPQ {
     /// Keys comparator
     Comparer compare;
 
-    /// Memory allocator - support memeory reclamation
+    /// Memory allocator - support memory reclamation
     Allocator allocator;
 
     /// Chunks list sentinels
     chunk_t begin_sentinel;
     chunk_t end_sentinel;
+
+    /// shortcut to reach a required chunk (instedof traversing the entire list)
     LockFreeSkipListSet<Comparer, Allocator, K, chunk_t*> index;
 
     inline chunk_t* new_chunk(chunk_t* parent) {
@@ -499,8 +485,8 @@ class KiWiPQ {
         }
 
         do {
-            chunk_t* pred = load_prev(ro->first);
 
+            chunk_t* pred = load_prev(ro->first);
             if (pred == nullptr) {
                 // ro-> first is not accessible - someone else succeeded -
                 // delete the chunks we just created and return
@@ -523,7 +509,6 @@ class KiWiPQ {
 
             if (ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
                 // success - normalize chunk and free old chunks and normalize
-                // normalize
                 normalize(ro->first, Cf);
 
                 chunk_t* curr = ro->first;
@@ -598,8 +583,6 @@ class KiWiPQ {
     }
 
     void normalize(chunk_t* parent, chunk_t* infant) {
-        std::cout << "\n\nnormalize\n\n";
-        index.print();
         if (parent) {
             rebalance_object_t *ro = parent->ro;
 
@@ -612,7 +595,7 @@ class KiWiPQ {
                 curr = next;
             } while (ro == unset_mark(next)->ro);
         }
-        index.print();
+
         if (infant) {
             chunk_t *curr = infant;
             chunk_t *pred, *next;
@@ -628,13 +611,9 @@ class KiWiPQ {
                         break;
                     }
                 }
-                std::cout << "pred " << pred->min_key << " curr " << curr->min_key << std::endl;
-                index.print();
                 curr = next;
             }
         }
-        index.print();
-        std::cout << "%%%%%%%%%%%%%%%%%%%%%%\n\n";
     }
 
     virtual bool policy(volatile chunk_t* chunk) {
@@ -728,22 +707,6 @@ class KiWiPQ {
             totalCount += chunk->size();
             chunk = unset_mark(chunk->next);
         }
-
-        return totalCount;
-    }
-
-    unsigned int print() {
-        chunk_t* chunk = unset_mark(begin_sentinel.next);
-        int inChunkCount = 0;
-        unsigned int totalCount = 0;
-        while (chunk != &end_sentinel) {
-
-            std::cout << chunk << "(" << chunk->min_key << ") : ";
-            totalCount += chunk->print();
-            chunk = unset_mark(chunk->next);
-            std::cout << std::endl;
-        }
-        index.print();
 
         return totalCount;
     }

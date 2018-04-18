@@ -127,11 +127,6 @@ public:
         head = min;
     }
 
-    bool empty() const
-    {
-        return head->next[0]->next[0] == 0;
-    }
-
     void fraser_search(K key, sl_node_t **left_list, sl_node_t **right_list, sl_node_t *dead)
     {
         sl_node_t *left, *left_next, *right, *right_next;
@@ -311,12 +306,8 @@ public:
 
         retry:
         fraser_search(key, preds, succs, NULL);
-        if (succs[0]->next[0] && succs[0]->key == key)
+        if ((succs[0]->next[0] && succs[0]->key == key) || (preds[0]->val != condition))
         {                             /* Value already in list - or pred's value is not equal to condition*/
-            result = 0;
-            sl_delete_node(newn);
-            goto end;
-        } else if (preds[0]->val != condition) {
             result = 0;
             sl_delete_node(newn);
             goto end;
@@ -366,19 +357,6 @@ public:
         end:
         return result;
     }
-
-    void print() {
-        sl_node_t* n = (head->next)[0];
-        int inChunkCount = 0;
-        unsigned int totalCount = 0;
-        while (n) {
-
-            std::cout << n->key << " -> ";
-            n = unset_mark(n->next)[0];
-        }
-        std::cout << " \\" << std::endl;
-    }
-
 };
 
 template<class Comparer, class Allocator, typename K, typename V>
