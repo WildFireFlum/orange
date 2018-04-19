@@ -590,20 +590,10 @@ class KiWiPQ {
             chunk_t *next;
             // pop out old chunks from index
             do {
-                volatile int res = -1;
                 next = unset_mark(curr->next);
-                if (index.pop_conditional(curr->min_key, curr)) {
-                    res = index.is_accessiable(curr->min_key, curr) ? 1 : 0;
-                } else {
-                    res = index.is_accessiable(curr->min_key, curr) ? 3 : 2;
-                }
-
-                if (res == 1 || res == 2) {
-                    printf("%d - index doesn't work so well - %p\n", getThreadId(), curr);
-                }
-
+                index.pop_conditional(curr->min_key, curr);
                 curr = next;
-            } while (ro == unset_mark(next)->ro);
+            } while (ro == curr->ro);
         }
 
         if (infant) {
@@ -654,11 +644,11 @@ class KiWiPQ {
     virtual ~KiWiPQ() = default;
 
     bool push(const K& key) {
-        chunk_t* chunk = locate_target_chunk(key);
-
-        if (check_rebalance(chunk, key)) {
-            return push(key);
-        }
+        chunk_t* chunk;
+        do {
+            chunk = locate_target_chunk(key);
+            MEM_BARRIER;
+        } while(check_rebalance(chunk, key));
 
         // allocate cell in linked list
         uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);
