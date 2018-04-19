@@ -628,7 +628,6 @@ class KiWiPQ {
           end_sentinel(),
           index(allocator, &begin_sentinel){
         begin_sentinel.next = &end_sentinel;
-        index.head->val = &begin_sentinel;
     }
 #endif
 

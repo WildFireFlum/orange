@@ -254,15 +254,6 @@ public:
         }
     }
 
-    void print() {
-        auto ptr = head;
-        while (unset_mark(ptr->next[0])) {
-            std::cout << ptr->key << " " << ptr->val << std::endl;
-            ptr = unset_mark(ptr->next[0]);
-        }
-
-    }
-
 };
 
 #endif //__KIWI_SKIP_LIST_SET_H__
