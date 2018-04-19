@@ -262,14 +262,10 @@ public:
         return succs[0]->next[0] && succs[0]->key == key && succs[0]->val == val;
     }
 
-    void print() {
+    void print(void (* f)(void*)) {
         sl_node_t * n = head->next[0];
         while (n->next[0]) {
-            printf("%p", n);
-            if (is_marked(n->next[0]))
-                printf(" ->* ");
-            else
-                printf(" -> ");
+            f(n->val);
             n = unset_mark(n->next[0]);
         }
         printf("\\\n");

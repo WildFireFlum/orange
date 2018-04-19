@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <csignal>
 
 #include "Utils.h"
 #include "Index.h"
@@ -655,8 +656,12 @@ class KiWiPQ {
             }
             if (count ++ == 100 && getThreadId() == 0) {
                 this->print();
-                index.print();
+                index.print(print_chunk);
                 printf("\n---------\n");
+            }
+
+            if (count == 1000 && getThreadId() == 0) {
+                std::raise(SIGINT);
             }
         } while(check_rebalance(chunk, key));
 
@@ -717,14 +722,24 @@ class KiWiPQ {
         return totalCount;
     }
 
+
+    static void print_chunk(void* ptr) {
+        auto c = reinterpret_cast<chunk_t *>(ptr);
+        printf("%p", c);
+        if (is_marked(c->next))
+            printf(" ->* ");
+        else
+            printf(" -> ");
+        printf("\tstat %d", c->status);
+        if (c->ro) printf("\tro %p (%p)", c->ro, c->ro->first);
+        printf("\tparent %p", c->parent);
+        printf("\n");
+    }
+
     void print() {
         chunk_t * n = begin_sentinel.next;
         while (n->next) {
-            printf("%p", n);
-            if (is_marked(n->next))
-                printf(" ->* ");
-            else
-                printf(" -> ");
+            print_chunk(n);
             n = unset_mark(n->next);
         }
 
