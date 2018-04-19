@@ -252,6 +252,14 @@ public:
         if (succs[0]->next[0] && succs[0]->key == key && succs[0]->val == val) {
             return complete_pop(succs[0]);
         }
+        return false;
+    }
+
+    bool is_accessiable(const K& key, const V& val) {
+        sl_node_t *succs[levelmax], *preds[levelmax];
+
+        fraser_search(key, preds, succs, NULL);
+        return succs[0]->next[0] && succs[0]->key == key && succs[0]->val == val;
     }
 
 };

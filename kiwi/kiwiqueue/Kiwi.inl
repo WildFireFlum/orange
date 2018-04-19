@@ -590,8 +590,18 @@ class KiWiPQ {
             chunk_t *next;
             // pop out old chunks from index
             do {
+                volatile int res = -1;
                 next = unset_mark(curr->next);
-                index.pop_conditional(curr->min_key, curr);
+                if (index.pop_conditional(curr->min_key, curr)) {
+                    res = index.is_accessiable(curr->min_key, curr) ? 1 : 0;
+                } else {
+                    res = index.is_accessiable(curr->min_key, curr) ? 3 : 2;
+                }
+
+                if (res == 1 || res == 2) {
+                    printf("%d - index doesn't work so well - %p\n", getThreadId(), curr);
+                }
+
                 curr = next;
             } while (ro == unset_mark(next)->ro);
         }
