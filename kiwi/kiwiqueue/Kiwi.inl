@@ -542,8 +542,7 @@ class KiWiPQ {
             // try to connect the new chunk to the list
             if (ATOMIC_CAS_MB(&(begin_sentinel.next),
                                unset_mark(&end_sentinel), unset_mark(chunk))) {
-                index.push_conditional(chunk->min_key, index.get_pred(key), chunk);
-                ATOMIC_CAS_MB(&(chunk->status), INFANT_CHUNK, NORMAL_CHUNK);
+                normalize(nullptr, chunk);
             } else {
                 // add failed - delete chunk.
                 delete_chunk(chunk);
