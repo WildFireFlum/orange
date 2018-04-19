@@ -170,7 +170,7 @@ public:
 
         retry:
         fraser_search(key, preds, succs, NULL);
-        if (/*succs[0]->key == key ||*/ preds[0]->val != prev)
+        if (succs[0]->key == key || preds[0]->val != prev)
         {                             /* Value already in list */
             result = false;
             sl_reclaim_node(newn);

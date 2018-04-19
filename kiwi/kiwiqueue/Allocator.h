@@ -1,9 +1,5 @@
-//
-// Created by Ynon on 10/04/2018.
-//
-
-#ifndef KIWI_ALLOCATOR_H
-#define KIWI_ALLOCATOR_H
+#ifndef __KIWI_ALLOCATOR_H__
+#define __KIWI_ALLOCATOR_H__
 
 class Allocator {
 public:
@@ -18,4 +14,4 @@ public:
 };
 
 
-#endif //KIWI_ALLOCATOR_H
+#endif //__KIWI_ALLOCATOR_H__
