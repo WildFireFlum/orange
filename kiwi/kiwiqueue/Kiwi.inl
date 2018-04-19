@@ -645,9 +645,19 @@ class KiWiPQ {
 
     bool push(const K& key) {
         chunk_t* chunk;
+        chunk_t* volatile ppp = nullptr;
+        int count = 0;
         do {
             chunk = locate_target_chunk(key);
-            MEM_BARRIER;
+            if (ppp != chunk) {
+                ppp = chunk;
+                count = 0;
+            }
+            if (count ++ == 100 && getThreadId() == 0) {
+                this->print();
+                index.print();
+                printf("\n---------\n");
+            }
         } while(check_rebalance(chunk, key));
 
         // allocate cell in linked list
@@ -705,6 +715,20 @@ class KiWiPQ {
         }
 
         return totalCount;
+    }
+
+    void print() {
+        chunk_t * n = begin_sentinel.next;
+        while (n->next) {
+            printf("%p", n);
+            if (is_marked(n->next))
+                printf(" ->* ");
+            else
+                printf(" -> ");
+            n = unset_mark(n->next);
+        }
+
+        printf("\\\n");
     }
 };
 
