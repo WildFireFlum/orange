@@ -3,6 +3,10 @@
 
 #include <cstdint>
 #include <stdint-gcc.h>
+#include <unistd.h>
+#include <cstdlib>
+#include <cstdio>
+#include <fcntl.h>
 
 #define KIWI_DEFAULT_CHUNK_SIZE 1024
 #define INDEX_SKIPLIST_LEVELS	20
@@ -48,5 +52,42 @@ extern unsigned numberOfThreads;
 unsigned int getNumOfThreads();
 
 unsigned int getThreadId();
+
+
+
+static __thread unsigned long seeds[3];
+static __thread bool seeds_init;
+
+//Marsaglia's xorshf generator
+inline unsigned long xorshf96(unsigned long* x, unsigned long* y, unsigned long* z)  //period 2^96-1
+{
+    unsigned long t;
+    (*x) ^= (*x) << 16;
+    (*x) ^= (*x) >> 5;
+    (*x) ^= (*x) << 1;
+
+    t = *x;
+    (*x) = *y;
+    (*y) = *z;
+    (*z) = t ^ (*x) ^ (*y);
+
+    return *z;
+}
+
+inline long rand_range(long r)
+{
+    if (!seeds_init) {
+        int fd = open("/dev/urandom", O_RDONLY);
+        if (read(fd, seeds, 3 * sizeof(unsigned long)) < 0) {
+            perror("read");
+            exit(1);
+        }
+        close(fd);
+        seeds_init = true;
+    }
+    long v = xorshf96(seeds, seeds + 1, seeds + 2) % r;
+    v++;
+    return v;
+}
 
 #endif //__KIWI_UTILS_H__

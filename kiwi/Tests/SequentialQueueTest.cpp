@@ -152,24 +152,11 @@ TEST_F(SequentialQueueTest, TestPolicyMultiChunk) {
     EXPECT_EQ(pq.getRebalanceCount(), 1);
 
     pq.setShouldUsePolicy(true);
+
     pq.push(0);
     EXPECT_EQ(pq.getNumOfChunks(), 4);
     EXPECT_EQ(pq.getRebalanceCount(), 2);
 
     const auto EXPECTED_QUEUE_SIZE = (KIWI_TEST_CHUNK_SIZE * 2) + 1;
     checkQueueSizeAndValidity(EXPECTED_QUEUE_SIZE);
-}
-
-TEST_F(SequentialQueueTest, TestIndex) {
-    auto& pq = getQueue();
-    auto& index = pq.index;
-
-    auto pred = index.get_pred(1);
-    for (int i = 17; i < 27 ; ++i) {
-        auto c = reinterpret_cast<typeof(pred)>(i);
-        index.push_conditional(1, pred, c);
-        pred = index.get_pred(1, c);
-        index.print();
-        std::cout << "--------" << std::endl;
-    }
 }

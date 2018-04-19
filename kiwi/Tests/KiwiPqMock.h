@@ -8,7 +8,7 @@
 #include <thread>
 #endif
 
-#define KIWI_TEST_CHUNK_SIZE 4u
+#define KIWI_TEST_CHUNK_SIZE 256u
 
 template <class Comparer, class Allocator, typename K, uint32_t N=KIWI_TEST_CHUNK_SIZE>
 class KiwiPQMock : public KiWiPQ<Comparer, Allocator, K, N> {

@@ -3,7 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <stdint-gcc.h>
+#include <cstring>
 
 #include "Utils.h"
 #include "Index.h"
@@ -416,8 +416,9 @@ class KiWiPQ {
                     ATOMIC_CAS_MB(&(ro->next), next, unset_mark(next->next));
                     last = next;
                 }
+            } else {
+                ATOMIC_CAS_MB(&(ro->next), next, nullptr);
             }
-            ATOMIC_CAS_MB(&(ro->next), next, nullptr);
         }
 
         // search for last concurrently engaged chunk
@@ -443,7 +444,7 @@ class KiWiPQ {
             K arr[N];
             uint32_t count = c->get_keys_to_preserve_from_chunk(arr);
             std::sort(arr, arr + count, compare);
-            for (uint32_t j = count; j > 0; j--) {
+            for (int j = count - 1; j >= 0; j--) {
                 if (Cn->i > (N / 2)) {
                     // Cn is more than half full - create new chunk
 
@@ -455,7 +456,7 @@ class KiWiPQ {
                     Cn = Cn->next;                                  // Cn points to the new chunk
                 }
                 volatile uint32_t& i = Cn->i;
-                Cn->k[i].key = arr[j - 1];
+                Cn->k[i].key = arr[j];
                 Cn->k[i].next = &(Cn->k[i + 1]);
                 i++;
             }
@@ -541,7 +542,7 @@ class KiWiPQ {
             // try to connect the new chunk to the list
             if (ATOMIC_CAS_MB(&(begin_sentinel.next),
                                unset_mark(&end_sentinel), unset_mark(chunk))) {
-                index.push_conditional(chunk->min_key, index.get_pred(key, chunk), chunk);
+                index.push_conditional(chunk->min_key, index.get_pred(key), chunk);
                 ATOMIC_CAS_MB(&(chunk->status), INFANT_CHUNK, NORMAL_CHUNK);
             } else {
                 // add failed - delete chunk.
@@ -566,9 +567,7 @@ class KiWiPQ {
     }
 
     chunk_t* load_prev(chunk_t* chunk) {
-        chunk_t* prev = index.get_pred(chunk->min_key, chunk); //&begin_sentinel;
-        if (!prev)
-            return nullptr;
+        chunk_t* prev = index.get_pred(chunk->min_key); //&begin_sentinel;
         chunk_t* curr = unset_mark(prev->next);
 
         while (curr != chunk && curr != &end_sentinel &&
@@ -605,7 +604,7 @@ class KiWiPQ {
             while (parent == curr->parent && curr->status == INFANT_CHUNK) {
                 next = unset_mark(curr->next);
                 while (true) {
-                    pred = index.get_pred(curr->min_key, curr);
+                    pred = index.get_pred(curr->min_key);
                     if (curr->status != INFANT_CHUNK) break;
                     if (index.push_conditional(curr->min_key, pred, curr)) {
                         ATOMIC_CAS_MB(&(curr->status), INFANT_CHUNK, NORMAL_CHUNK);
@@ -618,9 +617,7 @@ class KiWiPQ {
     }
 
     virtual bool policy(volatile chunk_t* chunk) {
-        // TODO ....
-        return false;  // chunk->i > (N * 3 / 4) || chunk->i <
-        // (N / 4);
+        return (chunk->i > (N * 3 / 4) || chunk->i < (N / 4)) && ((rand_range(100)-1) < 10);
     }
 
    public:

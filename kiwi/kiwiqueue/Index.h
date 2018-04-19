@@ -1,11 +1,7 @@
 #ifndef __KIWI_SKIP_LIST_SET_H__
 #define __KIWI_SKIP_LIST_SET_H__
 
-#include <cstdint>
-#include <fcntl.h>
-#include <unistd.h>
-#include <cstdio>
-#include <cstdlib>
+
 #include "Utils.h"
 
 // check cache alignment
@@ -43,42 +39,6 @@ protected:
     sl_node_t* head;
     uint8_t levelmax;
 
-
-    static __thread unsigned long seeds[3];
-    static __thread bool seeds_init;
-
-    //Marsaglia's xorshf generator
-    static inline unsigned long xorshf96(unsigned long* x, unsigned long* y, unsigned long* z)  //period 2^96-1
-    {
-        unsigned long t;
-        (*x) ^= (*x) << 16;
-        (*x) ^= (*x) >> 5;
-        (*x) ^= (*x) << 1;
-
-        t = *x;
-        (*x) = *y;
-        (*y) = *z;
-        (*z) = t ^ (*x) ^ (*y);
-
-        return *z;
-    }
-
-public:
-    static inline long rand_range(long r)
-    {
-        if (!seeds_init) {
-            int fd = open("/dev/urandom", O_RDONLY);
-            if (read(fd, seeds, 3 * sizeof(unsigned long)) < 0) {
-                perror("read");
-                exit(1);
-            }
-            close(fd);
-            seeds_init = true;
-        }
-        long v = xorshf96(seeds, seeds + 1, seeds + 2) % r;
-        v++;
-        return v;
-    }
 
 protected:
     void mark_node_ptrs(sl_node_t *n)
@@ -279,29 +239,11 @@ public:
         return true;
     }
 
+    // in case the key is in
     V& get_pred(const K& key) {
         sl_node_t *succs[levelmax], *preds[levelmax];
         fraser_search(key, preds, succs, nullptr);
         return preds[0]->val;
-    }
-
-    V get_pred(const K& key, const V& val) {
-        sl_node_t *succs[levelmax], *preds[levelmax], *pred, *succ;
-
-        fraser_search(key, preds, succs, nullptr);
-
-        pred = preds[0];
-        succ = pred->next[0];
-
-        while (succ && is_marked(succ) && succ->val != val && succ->key == key) {
-            pred = unset_mark(succ);
-            succ = pred->next[0];
-        }
-        if (succ == nullptr || succ->val != val) {
-            return static_cast<V>(0);
-        }
-
-        return pred->val;
     }
 
     bool pop_conditional(const K& key, const V& val) {
@@ -322,11 +264,5 @@ public:
     }
 
 };
-
-template<class Comparer, class Allocator, typename K, typename V>
-__thread unsigned long Index<Comparer, Allocator, K, V>::seeds[3];
-
-template<class Comparer, class Allocator, typename K, typename V>
-__thread bool Index<Comparer, Allocator, K, V>::seeds_init;
 
 #endif //__KIWI_SKIP_LIST_SET_H__
