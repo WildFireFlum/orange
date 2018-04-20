@@ -35,7 +35,7 @@ enum PPA_MASK {
  * to reach consensus regarding the set of engaged chunks. The consensus is
  * managed via pointers from the chunks to a dedicated rebalance object - ro.
  * Object of this class represent a single ro.
- * 
+ *
  * @tparam Comparer - Compares keys
  * @tparam K        - Keys type
  * @tparam N        - Number of keys in a chunk
@@ -80,7 +80,6 @@ class KiWiChunk {
 
     typedef struct element_s {
         K key;
-        volatile int deleted;
         struct element_s* volatile next;
     } element_t;
 
@@ -241,9 +240,7 @@ class KiWiChunk {
         // add all list elements
         element_t* element = begin_sentinel.next;
         while (element != &end_sentinel) {
-            if (!element->deleted) {
-                flags[element - k] = true;
-            }
+            flags[element - k] = true;
             element = unset_mark(element->next);
         }
 
@@ -283,48 +280,46 @@ class KiWiChunk {
             return false;
         }
 
-        element_t* currElem = &begin_sentinel;
+
+    retry:
+
+        element_t* pred = &begin_sentinel;
+        element_t* curr = begin_sentinel.next;
 
         while (true) {
-            // 1. find not deleted element
-            do {
-                currElem = unset_mark(currElem->next);
-            } while ((currElem != &end_sentinel) && (currElem->deleted));
+            // 1. find an element to pop - physically remove node from the
+            //    beginning of the list marked nodes
+            element_t* succ = curr->next;
+            while (is_marked(succ)) {
+                if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr), unset_mark(succ))) {
+                    goto retry;
+                }
+                curr = unset_mark(succ);
+                succ = curr->next;
+            }
 
-            if (currElem == &end_sentinel) {
+            if (curr == &end_sentinel) {
                 // end of the list
                 return false;
             }
 
-            // 2. publish pop
-            if (!publish_pop((uint32_t)(currElem - k))) {
+            // 2. publish pop - the index of curr is curr - k (pointer's arithmetic)
+            if (!publish_pop((uint32_t)(curr - k))) {
                 // chunk is being rebalanced
                 return false;
             }
 
             // 3. try to mark element as deleted
-            if (!ATOMIC_CAS_MB(&(currElem->deleted), 0, 1)) {
-                // someone else deleted the element before us, continue
-                continue;
-            }
-
-            // 4. deleted - pop from elements list
-            if (currElem == &end_sentinel) {
-                return false;
-            }
-
-            key = currElem->key;
+            key = curr->key;
             element_t* nextElem;
             do {
-                nextElem = currElem->next;
+                nextElem = curr->next;
                 if (is_marked(nextElem)) {
-                    break;
+                    // some one else deleted curr, look for other element to pop
+                    goto retry;
                 }
-            } while (
-                !ATOMIC_CAS_MB(&currElem->next, nextElem, set_mark(nextElem)));
+            } while (!ATOMIC_CAS_MB(&curr->next, nextElem, set_mark(nextElem)));
 
-            element_t *prev = nullptr, *next = nullptr;
-            find(compare, key, prev, next);
             return true;
         }
     }
@@ -338,7 +333,7 @@ class KiWiChunk {
         element_t* e = unset_mark(begin_sentinel.next);
         unsigned int chunkCount = 0;
         while (e != &end_sentinel) {
-            if (!e->deleted) chunkCount++;
+            if (!is_marked(e->next)) chunkCount++;
             e = unset_mark(e->next);
         }
         return chunkCount;
