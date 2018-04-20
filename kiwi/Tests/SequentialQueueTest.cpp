@@ -99,7 +99,9 @@ TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
     auto& pq = getQueue();
 
     for (int i = FIRST_POP; i <= LAST_POP; i++) {
+        printf("\n----- %d  --------\n", i);
         pq.push(i);
+        pq.print();
     }
 
     int popped = -1;

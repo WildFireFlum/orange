@@ -596,7 +596,6 @@ class KiWiPQ {
                 curr = next;
             } while (ro == curr->ro);
         }
-
         if (infant) {
             chunk_t *curr = infant;
             chunk_t *pred, *next;
@@ -656,7 +655,6 @@ class KiWiPQ {
             }
             if (count ++ == 100 && getThreadId() == 0) {
                 this->print();
-                index.print(print_chunk);
                 printf("\n---------\n");
             }
 
@@ -742,8 +740,8 @@ class KiWiPQ {
             print_chunk(n);
             n = unset_mark(n->next);
         }
-
         printf("\\\n");
+        index.print(print_chunk);
     }
 };
 

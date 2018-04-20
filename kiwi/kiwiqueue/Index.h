@@ -247,18 +247,29 @@ public:
     }
 
     bool pop_conditional(const K& key, const V& val) {
-        sl_node_t *succs[levelmax], *preds[levelmax];
+        sl_node_t *succs[levelmax], *preds[levelmax], * pred, * first;
         fraser_search(key, preds, succs, nullptr);
-        if (succs[0]->next[0] && succs[0]->key == key && succs[0]->val == val) {
-            return complete_pop(succs[0]);
+        pred = preds[0];
+
+        first = pred->next[0];
+        while (!is_marked(first) && first->key == key && first->val != val) {
+            first = first->next[0];
+        }
+
+
+        if (!is_marked(first) && first->key == key && first->val == val) {
+            return complete_pop(first);
         }
         return false;
     }
 
     bool is_accessiable(const K& key, const V& val) {
         sl_node_t *succs[levelmax], *preds[levelmax];
-
-        fraser_search(key, preds, succs, NULL);
+        char arr[sizeof(sl_node_t) + levelmax*sizeof(sl_node_t*)];
+        sl_node_t* ptr = reinterpret_cast<sl_node_t*>(arr);
+        ptr->init(levelmax, nullptr);
+        ptr->val = val;
+        fraser_search(key, preds, succs, ptr);
         return succs[0]->next[0] && succs[0]->key == key && succs[0]->val == val;
     }
 
