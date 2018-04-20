@@ -239,7 +239,9 @@ class KiWiChunk {
         // add all list elements
         element_t* element = begin_sentinel.next;
         while (element != &end_sentinel) {
-            flags[element - k] = true;
+            if(!is_marked(element->next)) {
+                flags[element - k] = true;
+            }
             element = unset_mark(element->next);
         }
 
