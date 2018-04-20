@@ -252,7 +252,7 @@ public:
         pred = preds[0];
 
         first = pred->next[0];
-        while (!is_marked(first) && first->key == key && first->val != val) {
+        while (!is_marked(first) && !compare(key, first->key)  && (first->key != key || first->val != val)) {
             first = first->next[0];
         }
 
@@ -261,16 +261,6 @@ public:
             return complete_pop(first);
         }
         return false;
-    }
-
-    bool is_accessiable(const K& key, const V& val) {
-        sl_node_t *succs[levelmax], *preds[levelmax];
-        char arr[sizeof(sl_node_t) + levelmax*sizeof(sl_node_t*)];
-        sl_node_t* ptr = reinterpret_cast<sl_node_t*>(arr);
-        ptr->init(levelmax, nullptr);
-        ptr->val = val;
-        fraser_search(key, preds, succs, ptr);
-        return succs[0]->next[0] && succs[0]->key == key && succs[0]->val == val;
     }
 
     void print(void (* f)(void*)) {
