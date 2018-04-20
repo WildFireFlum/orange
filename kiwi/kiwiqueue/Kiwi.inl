@@ -8,6 +8,7 @@
 #include "Utils.h"
 #include "Index.h"
 
+#define JOIN_REBALACNE_PERCENTAGE   25
 
 template <class Comparer, typename K, uint32_t N>
 class KiWiChunk;
@@ -130,15 +131,12 @@ class KiWiChunk {
     }
 
     /// Based on lock free list from "The art of multiprocessor programming"
-    void find(const Comparer& compare,
-              const K& key,
-              element_t*& out_prev,
-              element_t*& out_next) {
+    void find(const Comparer& compare, const K& key, element_t*& out_prev, element_t*& out_next) {
         element_t* pred = nullptr;
         element_t* curr = nullptr;
         element_t* succ = nullptr;
 
-    retry:
+        retry:
         while (true) {
             pred = &begin_sentinel;
             curr = unset_mark(pred->next);
@@ -280,9 +278,7 @@ class KiWiChunk {
             return false;
         }
 
-
-    retry:
-
+        retry:
         element_t* pred = &begin_sentinel;
         element_t* curr = begin_sentinel.next;
 
@@ -532,11 +528,11 @@ protected:
             }
 
             if (pred->status == FROZEN_CHUNK && unset_mark(pred->next) == ro->first) {
-                // In case pred is being rebalanced we have to help it (otherwise the
-                // algorithm is not lock free) but since only one thread can finish rebalance
+                // pred is being rebalanced we have to help it (otherwise the algorithm
+                // is not lock free) but since only one thread can finish rebalance
                 // successfully we prefer to wait for a little while before we help it:
-                // we flip a coin and join the rebalance with probability 0.25
-                if (flip_a_coin(25)) {
+                // we flip a coin and join the rebalance with probability JOIN_REBALACNE_PERCENTAGE / 100
+                if (flip_a_coin(JOIN_REBALACNE_PERCENTAGE)) {
                     rebalance(pred);
                 }
             }
@@ -656,6 +652,7 @@ public:
     virtual ~KiWiPQ() = default;
 
     bool push(const K& key) {
+        retry:
         chunk_t* chunk;
         do {
             chunk = locate_target_chunk(key);
@@ -667,7 +664,7 @@ public:
         if (i >= N) {
             // no more free space - trigger rebalance
             rebalance(chunk);
-            return push(key);
+            goto retry;
         }
 
         chunk->k[i].key = key;
@@ -675,7 +672,7 @@ public:
         if (!chunk->publish_push(i)) {
             // chunk is being rebalanced
             rebalance(chunk);
-            return push(key);
+            goto retry;
         }
 
         chunk->push(compare, chunk->k[i]);
@@ -692,8 +689,14 @@ public:
             }
 
             if (chunk->status == FROZEN) {
-                // chunk is being rebalanced
-                rebalance(chunk);
+                // chunk is being rebalanced so we have to help it (otherwise the algorithm
+                // is not lock free) but since only one thread can finish rebalance
+                // successfully we prefer to wait for a little while before we help it:
+                // we flip a coin and join the rebalance with probability JOIN_REBALACNE_PERCENTAGE / 100
+                if (chunk == begin_sentinel.next || flip_a_coin(JOIN_REBALACNE_PERCENTAGE)) {
+                    rebalance(chunk);
+                }
+
                 goto retry;
             }
 
