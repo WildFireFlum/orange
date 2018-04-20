@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <csignal>
 
 #include "Utils.h"
 #include "Index.h"
@@ -398,7 +397,6 @@ class KiWiPQ {
 
     virtual void rebalance(chunk_t* chunk) {
         // 1. engage
-        printf("rebalance %d - %p\n", getThreadId(), chunk);
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);

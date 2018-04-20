@@ -100,8 +100,7 @@ class KiwiChunk {
     rebalance_object_t* volatile ro;
 
     /// An array of indices to push or pop from the chunk, its size is equal to
-    /// the number of threads in the system (see new_chunk() in Ki
-    /// WiPQ)
+    /// the number of threads in the system (see new_chunk() in KiWiPQ)
     uint32_t ppa_len;
     uint32_t volatile ppa[0];
 
