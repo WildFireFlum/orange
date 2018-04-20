@@ -15,7 +15,6 @@
 
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
 #define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
-#define MEM_BARRIER     asm volatile("":::"memory")
 
 
 template <typename T>
@@ -48,13 +47,26 @@ static inline T * set_dead(T * i)
     return (T *)((uintptr_t)i | (uintptr_t)0x02);
 }
 
+#ifndef GALOIS
+
 extern unsigned nextID;
 extern unsigned numberOfThreads;
-
 unsigned int getNumOfThreads();
-
 unsigned int getThreadId();
 
+#else
+
+#include "Galois/Runtime/ll/TID.h"
+#include "Galois/Threads.h"
+
+unsigned int getNumOfThreads() {
+    return Galois::Runtime::activeThreads;
+}
+
+unsigned int getThreadId() {
+    return Galois::Runtime::LL::getTID();
+}
+#endif
 
 
 static __thread unsigned long seeds[3];

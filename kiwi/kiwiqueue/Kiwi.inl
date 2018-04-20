@@ -398,6 +398,7 @@ class KiWiPQ {
 
     virtual void rebalance(chunk_t* chunk) {
         // 1. engage
+        printf("rebalance %d - %p\n", getThreadId(), chunk);
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
         if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
             delete_ro(tmp);
@@ -645,22 +646,8 @@ class KiWiPQ {
 
     bool push(const K& key) {
         chunk_t* chunk;
-        chunk_t* volatile ppp = nullptr;
-        int count = 0;
         do {
             chunk = locate_target_chunk(key);
-            if (ppp != chunk) {
-                ppp = chunk;
-                count = 0;
-            }
-            if (count ++ == 100 && getThreadId() == 0) {
-                this->print();
-                printf("\n---------\n");
-            }
-
-            if (count == 1000 && getThreadId() == 0) {
-                std::raise(SIGINT);
-            }
         } while(check_rebalance(chunk, key));
 
         // allocate cell in linked list
@@ -718,30 +705,6 @@ class KiWiPQ {
         }
 
         return totalCount;
-    }
-
-
-    static void print_chunk(void* ptr) {
-        auto c = reinterpret_cast<chunk_t *>(ptr);
-        printf("%p", c);
-        if (is_marked(c->next))
-            printf(" ->* ");
-        else
-            printf(" -> ");
-        printf("\tstat %d", c->status);
-        if (c->ro) printf("\tro %p (%p)", c->ro, c->ro->first);
-        printf("\tparent %p", c->parent);
-        printf("\n");
-    }
-
-    void print() {
-        chunk_t * n = begin_sentinel.next;
-        while (n->next) {
-            print_chunk(n);
-            n = unset_mark(n->next);
-        }
-        printf("\\\n");
-        index.print(print_chunk);
     }
 };
 

@@ -2,41 +2,106 @@
 #define __KIWI_UTILS_H__
 
 #include <cstdint>
-
-#define NUMOFTHREADS 1
-#define FAKETID 0xdeaddaed
-
+#include <stdint-gcc.h>
+#include <unistd.h>
+#include <cstdlib>
+#include <cstdio>
+#include <fcntl.h>
 
 #define KIWI_DEFAULT_CHUNK_SIZE 1024
+#define INDEX_SKIPLIST_LEVELS	20
+#define RO_LIST_LEVEL           21
+#define CHUNK_LIST_LEVEL        22
+
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
 #define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
 
 
 template <typename T>
-inline bool is_marked(T* j) {
-    return ((uintptr_t)j & (uintptr_t)0x01) != 0;
+static inline bool is_marked(T* i)
+{
+    return ((uintptr_t)i & (uintptr_t)0x01) != 0;
 }
 
 template <typename T>
-inline T* unset_mark(T* j) {
-    return reinterpret_cast<T*>((uintptr_t)j & ~(uintptr_t)0x01);
+static inline bool is_dead(T* i)
+{
+    return ((uintptr_t)i & (uintptr_t)0x02) == 2;
 }
 
 template <typename T>
-inline T* set_mark(T* j) {
-    return reinterpret_cast<T*>((uintptr_t)j | (uintptr_t)0x01);
+static inline T* unset_mark(T* i)
+{
+    return (T *)((uintptr_t)i & ~(uintptr_t)0x03);
 }
 
-class NextId {
-public:
-    unsigned next();
-};
+template <typename T>
+static inline T* set_mark(T* i)
+{
+    return (T *)((uintptr_t)i | (uintptr_t)0x01);
+}
+
+template <typename T>
+static inline T * set_dead(T * i)
+{
+    return (T *)((uintptr_t)i | (uintptr_t)0x02);
+}
+
+#ifndef GALOIS
 
 extern unsigned nextID;
-extern NextId next;
-
+extern unsigned numberOfThreads;
 unsigned int getNumOfThreads();
-
 unsigned int getThreadId();
+
+#else
+
+#include "Galois/Runtime/ll/TID.h"
+#include "Galois/Threads.h"
+
+unsigned int getNumOfThreads() {
+    return Galois::Runtime::activeThreads;
+}
+
+unsigned int getThreadId() {
+    return Galois::Runtime::LL::getTID();
+}
+#endif
+
+
+static __thread unsigned long seeds[3];
+static __thread bool seeds_init;
+
+//Marsaglia's xorshf generator
+inline unsigned long xorshf96(unsigned long* x, unsigned long* y, unsigned long* z)  //period 2^96-1
+{
+    unsigned long t;
+    (*x) ^= (*x) << 16;
+    (*x) ^= (*x) >> 5;
+    (*x) ^= (*x) << 1;
+
+    t = *x;
+    (*x) = *y;
+    (*y) = *z;
+    (*z) = t ^ (*x) ^ (*y);
+
+    return *z;
+}
+
+inline long rand_range(long r)
+{
+    if (!seeds_init) {
+        int fd = open("/dev/urandom", O_RDONLY);
+        if (read(fd, seeds, 3 * sizeof(unsigned long)) < 0) {
+            perror("read");
+            exit(1);
+        }
+        close(fd);
+        seeds_init = true;
+    }
+    long v = xorshf96(seeds, seeds + 1, seeds + 2) % r;
+    v++;
+    return v;
+}
 
 #endif //__KIWI_UTILS_H__
