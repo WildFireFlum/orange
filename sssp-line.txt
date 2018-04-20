@@ -1,0 +1,1 @@
+apps/sssp/sssp -t 22 -delta 8 -wl kiwi-pq -startNode 12 /specific/disk1/home/mad/Galois-PQ/inputs/clique4000.gr
