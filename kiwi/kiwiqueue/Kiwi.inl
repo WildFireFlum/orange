@@ -10,7 +10,7 @@
 
 
 template <class Comparer, typename K, uint32_t N>
-class KiwiChunk;
+class KiWiChunk;
 
 template <class Comparer, typename K, uint32_t N>
 class KiWiRebalancedObject;
@@ -31,9 +31,14 @@ enum PPA_MASK {
 
 
 /**
- * The f
+ * Since multiple threads may simultaneously execute rebalance(C), they need
+ * to reach consensus regarding the set of engaged chunks. The consensus is
+ * managed via pointers from the chunks to a dedicated rebalance object - ro.
+ * Object of this class represent a single ro.
+ * 
  * @tparam Comparer - Compares keys
- * @tparam K
+ * @tparam K        - Keys type
+ * @tparam N        - Number of keys in a chunk
  */
 template <class Comparer, typename K, uint32_t N>
 class KiWiRebalancedObject {
@@ -42,25 +47,27 @@ class KiWiRebalancedObject {
     // a concurrent traversal.)
     void* dummy;
 
-    KiwiChunk<Comparer, K, N>* volatile first;  // the first chunk share this object
-    KiwiChunk<Comparer, K, N>* volatile next;   // next potential chunk - nullptr or &end_sentinel
+    KiWiChunk<Comparer, K, N>* volatile first;  // the first chunk share this object
+    KiWiChunk<Comparer, K, N>* volatile next;   // next potential chunk - nullptr or &end_sentinel
                                                 // when the engagement stage is over
 
-    void init(KiwiChunk<Comparer, K, N>* f, KiwiChunk<Comparer, K, N>* n) {
+    void init(KiWiChunk<Comparer, K, N>* f, KiWiChunk<Comparer, K, N>* n) {
         first = f;
         next = n;
     }
 };
 
 /**
- * Pre-allocated memory containing a sorted concurrent list
- * of nodes in which the priorities and the values are stored
+ * KiWi data structure is organized as a collection of large blocks of
+ * contiguous key ranges, called chunks. Object of this class represent
+ * a single chunk in the data structure.
+ *
  * @tparam Comparer - Compares keys
  * @tparam K        - Keys type
  * @tparam N        - Number of keys in a chunk
  */
 template <class Comparer, typename K, uint32_t N>
-class KiwiChunk {
+class KiWiChunk {
     using rebalance_object_t = KiWiRebalancedObject<Comparer, K, N>;
 
    public:
@@ -83,20 +90,22 @@ class KiwiChunk {
     element_t k[N];
     element_t end_sentinel;
 
-    /// The minimal key in the list, except for the first non-sentinel chunk
+    /// The minimal key in the list -
+    /// Note that this field is immutable and doesn't change
+    /// even after the minimal key was deleted
     K min_key;
 
     /// A link to the next chunk
-    KiwiChunk<Comparer, K, N>* volatile next;
+    KiWiChunk<Comparer, K, N>* volatile next;
 
     /// The status of the chunk
     volatile uint32_t status;
 
-    /// The parent chunk during rebalacing (while this chunk is still INFANT)
-    KiwiChunk<Comparer, K, N>* volatile parent;
+    /// The parent of the chunk (equivalent to parent process)
+    KiWiChunk<Comparer, K, N>* volatile parent;
 
     /// Ponits to the rebalanced object that win in the consensus at the
-    /// begging of rebalanced (nullptr in initialization time
+    /// begging of rebalanced (nullptr in initialization time)
     rebalance_object_t* volatile ro;
 
     /// An array of indices to push or pop from the chunk, its size is equal to
@@ -336,16 +345,13 @@ class KiwiChunk {
     }
 };
 
-#ifdef GALOIS
-#include "GaloisAllocator.h"
-#endif
 
 template <class Comparer, class Allocator, typename K, uint32_t N = KIWI_DEFAULT_CHUNK_SIZE>
 class KiWiPQ {
-    using chunk_t = KiwiChunk<Comparer, K, N>;
+    using chunk_t = KiWiChunk<Comparer, K, N>;
     using rebalance_object_t = KiWiRebalancedObject<Comparer, K, N>;
 
-   public:
+protected:
     /// Keys comparator
     Comparer compare;
 
@@ -356,7 +362,7 @@ class KiWiPQ {
     chunk_t begin_sentinel;
     chunk_t end_sentinel;
 
-    /// shortcut to reach a required chunk (instedof traversing the entire list)
+    /// Shortcut to reach a required chunk (instead of traversing the entire list)
     Index<Comparer, Allocator, K, chunk_t*> index;
 
     inline chunk_t* new_chunk(chunk_t* parent) {
@@ -617,8 +623,10 @@ class KiWiPQ {
         return (chunk->i > (N * 3 / 4) || chunk->i < (N / 4)) && ((rand_range(100)-1) < 10);
     }
 
-   public:
+public:
+
 #ifdef GALOIS
+
     KiWiPQ()
         : allocator(),
           begin_sentinel(),
@@ -626,8 +634,10 @@ class KiWiPQ {
           index(allocator, &begin_sentinel){
         begin_sentinel.next = &end_sentinel;
     }
-#endif
 
+#else
+
+    // constructor for tests only
     KiWiPQ(const K& begin_key,
            const K& end_key)
         : allocator(),
@@ -638,6 +648,8 @@ class KiWiPQ {
         begin_sentinel.min_key = begin_key;
         end_sentinel.min_key = end_key;
     }
+
+#endif
 
     virtual ~KiWiPQ() = default;
 
