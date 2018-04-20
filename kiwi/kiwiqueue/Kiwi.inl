@@ -383,12 +383,16 @@ protected:
 
     inline void delete_ro(rebalance_object_t* ro) { allocator.deallocate(ro, RO_LIST_LEVEL); }
 
+    inline bool policy(volatile chunk_t* chunk) {
+        return ((chunk->i > ((N * 5) >> 3)) || (chunk->i < (N  >> 3))) && flip_a_coin(15);
+    }
+
     bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
             normalize(chunk->parent, chunk);
             return true;
         }
-        if (chunk->i >= N || chunk->status == FROZEN_CHUNK || policy(chunk)) {
+        if (chunk->i >= N || chunk->status == FROZEN_CHUNK) {
             rebalance(chunk);
             return true;
         }
@@ -612,10 +616,6 @@ protected:
                 curr = next;
             }
         }
-    }
-
-    virtual bool policy(volatile chunk_t* chunk) {
-        return (chunk->i > (N * 3 / 4) || chunk->i < (N / 4)) && ((rand_range(100)-1) < 10);
     }
 
 public:

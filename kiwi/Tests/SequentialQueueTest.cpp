@@ -93,6 +93,7 @@ TEST_F(SequentialQueueTest, TestMultiPushPopAscendingOneChunk) {
 }
 
 TEST_F(SequentialQueueTest, TestMultiPushOnePopDecendingMultipleChunks) {
+    // this test was correct as long as policy returned false constantly
     const int NUM_OF_CHUNKS = 19;
     const int FIRST_POP = 10;
     const int LAST_POP = (KIWI_TEST_CHUNK_SIZE * NUM_OF_CHUNKS) + 10;
@@ -126,37 +127,4 @@ TEST_F(SequentialQueueTest, TestHeapSort) {
         EXPECT_TRUE(pq.try_pop(popped));
         EXPECT_EQ(arr[i], popped);
     }
-}
-
-TEST_F(SequentialQueueTest, TestPolicyMultiChunk) {
-    auto& pq = getQueue();
-
-    // Make sure that there are two chunks by filling one
-    for (int i = KIWI_TEST_CHUNK_SIZE / 2; i < KIWI_TEST_CHUNK_SIZE * (1.5) + 1; i++) {
-        pq.push(i);
-    }
-    EXPECT_EQ(pq.getNumOfChunks(), 2);
-    EXPECT_EQ(pq.getRebalanceCount(), 1);
-
-
-    // Fill up both chunks up to the threshold without triggering a rebalance
-    for (int i = 1; i < (KIWI_TEST_CHUNK_SIZE * 0.5); i++) {
-        pq.push(i);
-    }
-    EXPECT_EQ(pq.getRebalanceCount(), 1);
-
-    const int first_to_push = (KIWI_TEST_CHUNK_SIZE * (1.5)) + 1;
-    for (int i = 0; i < KIWI_TEST_CHUNK_SIZE * 0.5; i++) {
-        pq.push(first_to_push + i);
-    }
-    EXPECT_EQ(pq.getRebalanceCount(), 1);
-
-    pq.setShouldUsePolicy(true);
-
-    pq.push(0);
-    EXPECT_EQ(pq.getNumOfChunks(), 4);
-    EXPECT_EQ(pq.getRebalanceCount(), 2);
-
-    const auto EXPECTED_QUEUE_SIZE = (KIWI_TEST_CHUNK_SIZE * 2) + 1;
-    checkQueueSizeAndValidity(EXPECTED_QUEUE_SIZE);
 }
