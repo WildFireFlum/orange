@@ -9,6 +9,7 @@
 #include "Index.h"
 
 #define JOIN_REBALACNE_PERCENTAGE   25
+#define KIWI_DEFAULT_CHUNK_SIZE     1024
 
 template <class Comparer, typename K, uint32_t N>
 class KiWiChunk;

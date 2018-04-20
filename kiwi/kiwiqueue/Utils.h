@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <fcntl.h>
 
-#define KIWI_DEFAULT_CHUNK_SIZE 1024
 #define INDEX_SKIPLIST_LEVELS	20
 #define RO_LIST_LEVEL           21
 #define CHUNK_LIST_LEVEL        22
