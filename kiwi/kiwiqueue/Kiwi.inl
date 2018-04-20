@@ -495,6 +495,7 @@ protected:
 
         if (!is_empty) {
             Cn->next = unset_mark(c);
+            c = Cf;
         }
 
         do {
@@ -515,11 +516,7 @@ protected:
                 return;
             }
 
-            if (!is_empty) {
-                c = Cf;
-            }
-
-            if (ATOMIC_CAS_MB(&(pred->next), unset_mark(ro->first), unset_mark(c))) {
+            if (ATOMIC_CAS_MB(&(pred->next), ro->first, unset_mark(c))) {
                 // success - normalize chunk and free old chunks and normalize
                 normalize(ro->first, Cf);
 
@@ -534,10 +531,14 @@ protected:
                 return;
             }
 
-            if (pred->status == FROZEN_CHUNK &&
-                unset_mark(pred->next) == ro->first) {
-                // the predecessor is being rebalanced - help it and retry
-                rebalance(pred);
+            if (pred->status == FROZEN_CHUNK && unset_mark(pred->next) == ro->first) {
+                // In case pred is being rebalanced we have to help it (otherwise the
+                // algorithm is not lock free) but since only one thread can finish rebalance
+                // successfully we prefer to wait for a little while before we help it:
+                // we flip a coin and join the rebalance with probability 0.25
+                if (flip_a_coin(25)) {
+                    rebalance(pred);
+                }
             }
 
         } while (true);
@@ -683,7 +684,8 @@ public:
     }
 
     bool try_pop(K& key) {
-        chunk_t* chunk = unset_mark(begin_sentinel.next);
+        retry:
+        chunk_t* chunk = begin_sentinel.next;
         while (chunk != &end_sentinel) {
             if (chunk->try_pop(compare, key)) {
                 return true;
@@ -692,7 +694,7 @@ public:
             if (chunk->status == FROZEN) {
                 // chunk is being rebalanced
                 rebalance(chunk);
-                return try_pop(key);
+                goto retry;
             }
 
             chunk = unset_mark(chunk->next);
