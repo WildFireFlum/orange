@@ -152,7 +152,7 @@ public:
         int i, level = 1;
         for (i = 0; i < levelmax - 1; i++)
         {
-            if ((rand_range(100)-1) < 50)
+            if (flip_a_coin(50))
                 level++;
             else
                 break;

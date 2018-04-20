@@ -104,4 +104,8 @@ inline long rand_range(long r)
     return v;
 }
 
+inline bool flip_a_coin(int p) {
+    return (rand_range(100)-1) < p;
+}
+
 #endif //__KIWI_UTILS_H__

@@ -184,8 +184,8 @@ class KiWiChunk {
             find(compare, key, left, right);
 
             element.next = right;
-            if (ATOMIC_CAS_MB(&(left->next), unset_mark(right),
-                              unset_mark(&element))) {
+            if (!is_marked(right) &&
+                ATOMIC_CAS_MB(&(left->next), unset_mark(right), unset_mark(&element))) {
                 return;
             }
         }
@@ -383,8 +383,12 @@ protected:
 
     inline void delete_ro(rebalance_object_t* ro) { allocator.deallocate(ro, RO_LIST_LEVEL); }
 
-    inline bool policy(volatile chunk_t* chunk) {
+    inline bool policy_engage(volatile chunk_t* chunk) {
         return ((chunk->i > ((N * 5) >> 3)) || (chunk->i < (N  >> 3))) && flip_a_coin(15);
+    }
+
+    inline bool policy_check_rebalance(volatile chunk_t* chunk) {
+        return (chunk->i > ((N * 5) >> 3)) && flip_a_coin(5);
     }
 
     bool check_rebalance(chunk_t* chunk, const K& key) {
@@ -392,7 +396,7 @@ protected:
             normalize(chunk->parent, chunk);
             return true;
         }
-        if (chunk->i >= N || chunk->status == FROZEN_CHUNK) {
+        if (chunk->i >= N || chunk->status == FROZEN_CHUNK || policy_check_rebalance(chunk)) {
             rebalance(chunk);
             return true;
         }
@@ -401,19 +405,22 @@ protected:
 
     virtual void rebalance(chunk_t* chunk) {
         // 1. engage
-        rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
-        if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
-            delete_ro(tmp);
+        if (!chunk->ro) {
+            // if ro wasn't seted yet create a new ro and try to commit it
+            rebalance_object_t *tmp = new_ro(chunk, unset_mark(chunk->next));
+            if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
+                delete_ro(tmp);
+            }
         }
         rebalance_object_t* ro = chunk->ro;
 
-        volatile chunk_t* last = chunk;
+        chunk_t* last = chunk;
         while (true) {
             chunk_t* next = unset_mark(ro->next);
             if (next == nullptr || next == &end_sentinel) {
                 break;
             }
-            if (policy(next)) {
+            if (policy_engage(next)) {
                 ATOMIC_CAS_MB(&(next->ro), nullptr, ro);
 
                 if (next->ro == ro) {
@@ -448,10 +455,10 @@ protected:
             K arr[N];
             uint32_t count = c->get_keys_to_preserve_from_chunk(arr);
             std::sort(arr, arr + count, compare);
+            // the array is now sorted in reverse order - hence we use reverse loop
             for (int j = count - 1; j >= 0; j--) {
                 if (Cn->i > (N / 2)) {
                     // Cn is more than half full - create new chunk
-
                     Cn->min_key = Cn->k[0].key;                     // set Cn min key - this value won't be change
                     Cn->begin_sentinel.next = &Cn->k[0];            // connect begin sentinel to the list
                     Cn->k[Cn->i - 1].next = &(Cn->end_sentinel);    // close the list by point the last key
@@ -483,15 +490,14 @@ protected:
         // 5. replace
         do {
             c = last->next;
-        } while (!is_marked(c) &&
-                 !ATOMIC_CAS_MB(&(last->next), unset_mark(c), set_mark(c)));
+            if (is_marked(c)) break;
+        } while (!ATOMIC_CAS_MB(&(last->next), unset_mark(c), set_mark(c)));
 
         if (!is_empty) {
             Cn->next = unset_mark(c);
         }
 
         do {
-
             chunk_t* pred = load_prev(ro->first);
             if (pred == nullptr) {
                 // ro-> first is not accessible - someone else succeeded -
@@ -541,11 +547,11 @@ protected:
         if (begin_sentinel.next == &end_sentinel) {
             // the chunk list is empty, we need to create a chunk
             chunk_t* chunk = new_chunk(nullptr);
-            chunk->min_key = key;  // set chunk's min key
-            chunk->next = &end_sentinel;  // set chunk->next point to end sentinel
+            chunk->min_key = key;           // set chunk's min key
+            chunk->next = &end_sentinel;    // set chunk->next point to end sentinel
             // try to connect the new chunk to the list
-            if (ATOMIC_CAS_MB(&(begin_sentinel.next),
-                               unset_mark(&end_sentinel), unset_mark(chunk))) {
+            if (ATOMIC_CAS_MB(&(begin_sentinel.next), &end_sentinel, unset_mark(chunk))) {
+                // success - normalize
                 normalize(nullptr, chunk);
             } else {
                 // add failed - delete chunk.
@@ -553,7 +559,7 @@ protected:
             }
         }
 
-        chunk_t* c = index.get_pred(key);// &begin_sentinel;
+        chunk_t* c = index.get_pred(key);
         chunk_t* next = unset_mark(c->next);
 
         while (next != &end_sentinel && !compare(next->min_key, key)) {
@@ -570,7 +576,7 @@ protected:
     }
 
     chunk_t* load_prev(chunk_t* chunk) {
-        chunk_t* prev = index.get_pred(chunk->min_key); //&begin_sentinel;
+        chunk_t* prev = index.get_pred(chunk->min_key);
         chunk_t* curr = unset_mark(prev->next);
 
         while (curr != chunk && curr != &end_sentinel &&
