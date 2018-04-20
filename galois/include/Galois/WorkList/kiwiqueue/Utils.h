@@ -59,11 +59,11 @@ unsigned int getThreadId();
 #include "Galois/Runtime/ll/TID.h"
 #include "Galois/Threads.h"
 
-unsigned int getNumOfThreads() {
+inline unsigned int getNumOfThreads() {
     return Galois::Runtime::activeThreads;
 }
 
-unsigned int getThreadId() {
+inline unsigned int getThreadId() {
     return Galois::Runtime::LL::getTID();
 }
 #endif
