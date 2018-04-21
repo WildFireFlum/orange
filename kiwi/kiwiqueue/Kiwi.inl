@@ -17,6 +17,12 @@ class KiWiChunk;
 template <class Comparer, typename K, uint32_t N>
 class KiWiRebalancedObject;
 
+/**
+ * Chunks are created as immutable infants by some parent trigger chunk C;
+ * they become normal mutable chunks at the end of the rebalance process;
+ * and finally they become frozen (and again immutable) when they are
+ * about to be replaced.
+ */
 enum ChunkStatus {
     UNINITIALIZED_CHUNK = 0,
     INFANT_CHUNK        = 1,
@@ -73,11 +79,13 @@ class KiWiChunk {
     using rebalance_object_t = KiWiRebalancedObject<Comparer, K, N>;
 
    public:
-    // dummy field which is used by the heap when the node is freed.
-    // (without it, freeing a node would corrupt a field, possibly affecting
-    // a concurrent traversal.)
+    /// Dummy field which is used by the heap when the node is freed.
+    /// (without it, freeing a node would corrupt a field, possibly affecting
+    /// a concurrent traversal.)
     void* dummy;
 
+    /// Index of the next free cell in k - when i >= N we have
+    /// to rebalance the chunk
     volatile uint32_t i;
 
     typedef struct element_s {
@@ -105,7 +113,7 @@ class KiWiChunk {
     /// The parent of the chunk (equivalent to parent process)
     KiWiChunk<Comparer, K, N>* volatile parent;
 
-    /// Ponits to the rebalanced object that win in the consensus at the
+    /// Points to the rebalanced object that win in the consensus at the
     /// begging of rebalanced (nullptr in initialization time)
     rebalance_object_t* volatile ro;
 
@@ -114,7 +122,8 @@ class KiWiChunk {
     uint32_t ppa_len;
     uint32_t volatile ppa[0];
 
-    void init(unsigned int num_threads) {
+    /// Initialized a chunk with ppa_len = num_of_threads
+    void init(unsigned int num_of_threads) {
         // clean memory (not including the dummy and ppa array)
         memset((char*)this + sizeof(dummy), 0, sizeof(*this) - sizeof(dummy));
 
@@ -122,7 +131,7 @@ class KiWiChunk {
         begin_sentinel.next = &end_sentinel;
 
         // initialize ppa entries
-        ppa_len = num_threads;
+        ppa_len = num_of_threads;
         for (int j = 0; j < ppa_len; j++) {
             ppa[j] = IDLE;
         }
@@ -131,7 +140,6 @@ class KiWiChunk {
         status = INFANT_CHUNK;
     }
 
-    /// Based on lock free list from "The art of multiprocessor programming"
     void find(const Comparer& compare, const K& key, element_t*& out_prev, element_t*& out_next) {
         element_t* pred = nullptr;
         element_t* curr = nullptr;
@@ -145,7 +153,7 @@ class KiWiChunk {
             while (true) {
                 succ = curr->next;
 
-                // physically remove node from the beginning of the list marked nodes
+                // physically remove marked nodes from the list
                 while (is_marked(curr->next)) {
                     if (!ATOMIC_CAS_MB(&(pred->next), unset_mark(curr),
                                        unset_mark(succ))) {
@@ -188,90 +196,6 @@ class KiWiChunk {
                 return;
             }
         }
-    }
-
-    void freeze() {
-        status = ChunkStatus::FROZEN_CHUNK;
-        for (uint32_t j = 0; j < ppa_len; j++) {
-            uint32_t ppa_j;
-            do {
-                ppa_j = ppa[j];
-            } while (!(ppa_j & FROZEN) &&
-                     !ATOMIC_CAS_MB(&ppa[j], ppa_j, ppa_j | FROZEN));
-        }
-    }
-
-    bool publish_push(uint32_t index) {
-        uint32_t thread_id = getThreadId();
-        uint32_t ppa_t = ppa[thread_id];
-        if (!(ppa_t & FROZEN)) {
-            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, PUSH | index);
-        }
-        return false;
-    }
-
-    bool publish_pop(uint32_t index) {
-        uint32_t thread_id = getThreadId();
-        uint32_t ppa_t = ppa[thread_id];
-        if (!(ppa_t & FROZEN)) {
-            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, POP | index);
-        }
-        return false;
-    }
-
-    bool unpublish_index() {
-        uint32_t thread_id = getThreadId();
-        uint32_t ppa_t = ppa[thread_id];
-        if (!(ppa_t & FROZEN)) {
-            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, IDLE);
-        }
-        return false;
-    }
-
-    uint32_t get_keys_to_preserve_from_chunk(K (&arr)[N]) {
-        if (status != FROZEN_CHUNK) {
-            // invalid call
-            return 0;
-        }
-
-        bool flags[N] = {false};
-
-        // add all list elements
-        element_t* element = begin_sentinel.next;
-        while (element != &end_sentinel) {
-            flags[element - k] = true;
-            element = unset_mark(element->next);
-        }
-
-        // add pending push
-        for (int j = 0; j < ppa_len; j++) {
-            uint32_t ppa_j = ppa[j];
-            if (ppa_j & PUSH) {
-                uint32_t index = ppa_j & IDLE;
-                if (index < N) {
-                    flags[index] = true;
-                }
-            }
-        }
-
-        // remove pending pop
-        for (int j = 0; j < ppa_len; j++) {
-            uint32_t ppa_j = ppa[j];
-            if (ppa_j & POP) {
-                uint32_t index = ppa_j & IDLE;
-                if (index < N) {
-                    flags[index] = false;
-                }
-            }
-        }
-
-        uint32_t count = 0;
-        for (int j = 0; j < N; j++) {
-            if (flags[j]) {
-                arr[count++] = k[j].key;
-            }
-        }
-        return count;
     }
 
     bool try_pop(const Comparer& compare, K& key) {
@@ -319,6 +243,93 @@ class KiWiChunk {
 
             return true;
         }
+    }
+
+    inline void freeze() {
+        status = ChunkStatus::FROZEN_CHUNK;
+        for (uint32_t j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j;
+            do {
+                ppa_j = ppa[j];
+                if (ppa_j & FROZEN) break;
+            } while (!ATOMIC_CAS_MB(&ppa[j], ppa_j, ppa_j | FROZEN));
+        }
+    }
+
+    inline bool publish_push(uint32_t index) {
+        uint32_t thread_id = getThreadId();
+        uint32_t ppa_t = ppa[thread_id];
+        if (!(ppa_t & FROZEN)) {
+            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, PUSH | index);
+        }
+        return false;
+    }
+
+    inline bool publish_pop(uint32_t index) {
+        uint32_t thread_id = getThreadId();
+        uint32_t ppa_t = ppa[thread_id];
+        if (!(ppa_t & FROZEN)) {
+            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, POP | index);
+        }
+        return false;
+    }
+
+    inline bool unpublish_index() {
+        uint32_t thread_id = getThreadId();
+        uint32_t ppa_t = ppa[thread_id];
+        if (!(ppa_t & FROZEN)) {
+            return ATOMIC_CAS_MB(&ppa[thread_id], ppa_t, IDLE);
+        }
+        return false;
+    }
+
+    uint32_t get_keys_to_preserve_from_chunk(K (&arr)[N]) {
+        if (status != FROZEN_CHUNK) {
+            // invalid call
+            return 0;
+        }
+
+        bool flags[N] = {false};
+
+        // add all list elements
+        element_t* element = begin_sentinel.next;
+        while (element != &end_sentinel) {
+            if(!is_marked(element->next)) {
+                flags[element - k] = true;
+            }
+            element = unset_mark(element->next);
+        }
+
+        // add pending push
+        for (int j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j = ppa[j];
+            if (ppa_j & PUSH) {
+                uint32_t index = ppa_j & IDLE;
+                if (index < N) {
+                    flags[index] = true;
+                }
+            }
+        }
+
+        // remove pending pop
+        for (int j = 0; j < ppa_len; j++) {
+            uint32_t ppa_j = ppa[j];
+            if (ppa_j & POP) {
+                uint32_t index = ppa_j & IDLE;
+                if (index < N) {
+                    flags[index] = false;
+                }
+            }
+        }
+
+        // clone keys into arr and return the number of elements in it
+        uint32_t count = 0;
+        for (int j = 0; j < N; j++) {
+            if (flags[j]) {
+                arr[count++] = k[j].key;
+            }
+        }
+        return count;
     }
 
     /**
@@ -388,7 +399,7 @@ protected:
         return (chunk->i > ((N * 5) >> 3)) && flip_a_coin(5);
     }
 
-    bool check_rebalance(chunk_t* chunk, const K& key) {
+    inline bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
             normalize(chunk->parent, chunk);
             return true;
