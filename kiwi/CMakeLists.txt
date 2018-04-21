@@ -19,7 +19,7 @@ set(SOURCE_FILES
         Tests/QueueTest.h
         Tests/QueueTest.cpp
         Tests/SequentialQueueTest.cpp
-        Tests/ConcurrentQueueTest.cpp)
+        Tests/ConcurrentQueueTest.cpp kiwiqueue/mytimer.h)
 
 add_executable(kiwi ${SOURCE_FILES})
 target_link_libraries(kiwi gtest gtest_main)

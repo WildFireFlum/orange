@@ -7,6 +7,7 @@
 
 #include "Utils.h"
 #include "Index.h"
+#include "mytimer.h"
 
 #define JOIN_REBALACNE_PERCENTAGE   25
 #define KIWI_DEFAULT_CHUNK_SIZE     (1 << 14)
@@ -413,6 +414,7 @@ protected:
 
     virtual void rebalance(chunk_t* chunk) {
         // 1. engage
+        start(LI_REBALANCE);
         if (!chunk->ro) {
             // if ro wasn't seted yet create a new ro and try to commit it
             rebalance_object_t *tmp = new_ro(chunk, unset_mark(chunk->next));
@@ -519,13 +521,14 @@ protected:
                         delete_chunk(curr);
                     } while ((curr != Cn) && (curr = next));
                 }
-
+                end(LI_REBALANCE);
                 normalize(ro->first, nullptr);
                 return;
             }
 
             if (ATOMIC_CAS_MB(&(pred->next), ro->first, unset_mark(c))) {
                 // success - normalize chunk and free old chunks and normalize
+                end(LI_REBALANCE);
                 normalize(ro->first, Cf);
 
                 chunk_t* curr = ro->first;
@@ -602,6 +605,7 @@ protected:
     }
 
     void normalize(chunk_t* parent, chunk_t* infant) {
+        start(LI_NORMALIZE);
         if (parent) {
             rebalance_object_t *ro = parent->ro;
 
@@ -631,6 +635,8 @@ protected:
                 curr = next;
             }
         }
+        end(LI_NORMALIZE);
+        print();
     }
 
 public:
@@ -664,6 +670,7 @@ public:
     virtual ~KiWiPQ() = default;
 
     bool push(const K& key) {
+        start(LI_PUSH);
         retry:
         chunk_t* chunk;
         do {
@@ -689,14 +696,17 @@ public:
 
         chunk->push(compare, chunk->k[i]);
         chunk->unpublish_index();
+        end(LI_PUSH);
         return true;
     }
 
     bool try_pop(K& key) {
+        start(LI_POP);
         retry:
         chunk_t* chunk = begin_sentinel.next;
         while (chunk != &end_sentinel) {
             if (chunk->try_pop(compare, key)) {
+                end(LI_POP);
                 return true;
             }
 
