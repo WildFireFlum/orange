@@ -9,7 +9,7 @@
 #include "Index.h"
 
 #define JOIN_REBALACNE_PERCENTAGE   25
-#define KIWI_DEFAULT_CHUNK_SIZE     1024
+#define KIWI_DEFAULT_CHUNK_SIZE     (1 << 14)
 
 template <class Comparer, typename K, uint32_t N>
 class KiWiChunk;
@@ -396,7 +396,7 @@ protected:
     }
 
     inline bool policy_check_rebalance(volatile chunk_t* chunk) {
-        return (chunk->i > ((N * 5) >> 3)) && flip_a_coin(5);
+        return (chunk->i > ((N * 7) >> 3)) && flip_a_coin(5);
     }
 
     inline bool check_rebalance(chunk_t* chunk, const K& key) {
