@@ -40,7 +40,6 @@ protected:
     uint8_t levelmax;
 
 
-protected:
     void mark_node_ptrs(sl_node_t *n)
     {
         sl_node_t *n_next;
@@ -74,6 +73,20 @@ protected:
 
     inline void sl_reclaim_node(sl_node_t *n) {
         allocator.reclaim(n, n->toplevel-1);
+    }
+
+    inline int get_rand_level()
+    {
+        int i, level = 1;
+        for (i = 0; i < levelmax - 1; i++)
+        {
+            if (flip_a_coin(50))
+                level++;
+            else
+                break;
+        }
+        /* 1 <= level <= *levelmax */
+        return level;
     }
 
 public:
@@ -147,20 +160,6 @@ public:
         }
     }
 
-    int get_rand_level()
-    {
-        int i, level = 1;
-        for (i = 0; i < levelmax - 1; i++)
-        {
-            if (flip_a_coin(50))
-                level++;
-            else
-                break;
-        }
-        /* 1 <= level <= *levelmax */
-        return level;
-    }
-
     bool push_conditional(const K& key, const V& prev, const V& val)
     {
         sl_node_t *newn, *new_next, *pred, *succ, *succs[levelmax], *preds[levelmax];
@@ -171,7 +170,7 @@ public:
         retry:
         fraser_search(key, preds, succs, NULL);
         if (succs[0]->key == key || preds[0]->val != prev)
-        {                             /* Value already in list */
+        {
             result = false;
             sl_reclaim_node(newn);
             goto end;
@@ -239,7 +238,6 @@ public:
         return true;
     }
 
-    // in case the key is in
     V& get_pred(const K& key) {
         sl_node_t *succs[levelmax], *preds[levelmax];
         fraser_search(key, preds, succs, nullptr);
@@ -250,16 +248,20 @@ public:
         sl_node_t *succs[levelmax], *preds[levelmax], * pred, * first;
         fraser_search(key, preds, succs, nullptr);
         pred = preds[0];
-
         first = pred->next[0];
+
+        // Traverse the list from pred as long the key <= first->key (aka !compare(key, first->key))
+        // or until we find a node with matching key val
         while (!is_marked(first) && !compare(key, first->key)  && (first->key != key || first->val != val)) {
             first = first->next[0];
         }
 
-
+        // Pop in case we found a node
         if (!is_marked(first) && first->key == key && first->val == val) {
             return complete_pop(first);
         }
+
+        // This node is longer in the list - return false
         return false;
     }
 };
