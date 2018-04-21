@@ -10,7 +10,7 @@
 #include "mytimer.h"
 
 #define JOIN_REBALACNE_PERCENTAGE   25
-#define KIWI_DEFAULT_CHUNK_SIZE     (1 << 14)
+#define KIWI_DEFAULT_CHUNK_SIZE     1024
 
 template <class Comparer, typename K, uint32_t N>
 class KiWiChunk;
@@ -59,10 +59,13 @@ class KiWiRebalancedObject {
     KiWiChunk<Comparer, K, N>* volatile first;  // the first chunk share this object
     KiWiChunk<Comparer, K, N>* volatile next;   // next potential chunk - nullptr or &end_sentinel
                                                 // when the engagement stage is over
+    bool (*policy)(KiWiChunk<Comparer, K, N>*); // the policy to use
 
-    void init(KiWiChunk<Comparer, K, N>* f, KiWiChunk<Comparer, K, N>* n) {
+    void init(KiWiChunk<Comparer, K, N>* f, KiWiChunk<Comparer, K, N>* n,
+              bool (*p)(KiWiChunk<Comparer, K, N>*)) {
         first = f;
         next = n;
+        policy = p;
     }
 };
 
@@ -382,9 +385,9 @@ protected:
 
     inline void delete_chunk(chunk_t* chunk) { allocator.deallocate(chunk, CHUNK_LIST_LEVEL); }
 
-    inline rebalance_object_t* new_ro(chunk_t* f, chunk_t* n) {
+    inline rebalance_object_t* new_ro(chunk_t* f, chunk_t* n, bool (* p)(chunk_t*)) {
         rebalance_object_t* ro = reinterpret_cast<rebalance_object_t*>(allocator.allocate(sizeof(rebalance_object_t), RO_LIST_LEVEL));
-        ro->init(f, n);
+        ro->init(f, n, p);
         return ro;
     }
 
@@ -402,7 +405,7 @@ protected:
 
     //static inline bool policy_
     static inline bool try_pop_policy(chunk_t* chunk) {
-        return flip_a_coin(95);
+        return flip_a_coin(80);
     }
 
     inline bool check_rebalance(chunk_t* chunk, const K& key) {
@@ -421,17 +424,18 @@ protected:
         rebalance(chunk, policy_engage);
     }
 
-    void rebalance(chunk_t* chunk, bool (* policy)(chunk_t*)) {
+    void rebalance(chunk_t* chunk, bool (* p)(chunk_t*)) {
         // 1. engage
         start(LI_REBALANCE);
         if (!chunk->ro) {
             // if ro wasn't seted yet create a new ro and try to commit it
-            rebalance_object_t *tmp = new_ro(chunk, unset_mark(chunk->next));
+            rebalance_object_t *tmp = new_ro(chunk, unset_mark(chunk->next), p);
             if (!ATOMIC_CAS_MB(&(chunk->ro), nullptr, tmp)) {
                 delete_ro(tmp);
             }
         }
-        rebalance_object_t* ro = chunk->ro;
+        auto ro = chunk->ro;
+        auto policy = ro->policy;
 
         chunk_t* last = chunk;
         while (true) {
@@ -740,7 +744,7 @@ public:
 
         cleanup:
 
-        if (count > 20) {
+        if (ret && (count > 20)) {
             rebalance(begin_sentinel.next, try_pop_policy);
         }
         return ret;
