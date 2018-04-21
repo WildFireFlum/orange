@@ -183,6 +183,9 @@ class KiwiChunk {
         }
     }
 
+    /**
+     * Make the chunk immutable for a rebalance
+     */
     void freeze() {
         status = ChunkStatus::FROZEN_CHUNK;
         for (uint32_t j = 0; j < ppa_len; j++) {
@@ -221,6 +224,11 @@ class KiwiChunk {
         return false;
     }
 
+    /**
+     * Fills arr with keys which should be kept in the chunk
+     * @param arr An pre allocated output parameter
+     * @return The number of elements in arr
+     */
     uint32_t get_keys_to_preserve_from_chunk(K (&arr)[N]) {
         if (status != FROZEN_CHUNK) {
             // invalid call
@@ -359,6 +367,7 @@ class KiWiPQ {
     /// shortcut to reach a required chunk (instedof traversing the entire list)
     Index<Comparer, Allocator, K, chunk_t*> index;
 
+    /// This section manages memory
     inline chunk_t* new_chunk(chunk_t* parent) {
         // Second argument is an index of a freelist to use to reclaim
         unsigned int num_of_threads = getNumOfThreads();
@@ -381,8 +390,14 @@ class KiWiPQ {
     inline void reclaim_ro(rebalance_object_t* ro) { allocator.reclaim(ro, RO_LIST_LEVEL); }
 
     inline void delete_ro(rebalance_object_t* ro) { allocator.deallocate(ro, RO_LIST_LEVEL); }
+    /// End of memory management section
 
-    bool check_rebalance(chunk_t* chunk, const K& key) {
+
+    /**
+     * @param chunk the chunk to test
+     * @return true iff chunk should be rebalanced
+     */
+    bool check_rebalance(chunk_t* chunk) {
         if (chunk->status == INFANT_CHUNK) {
             normalize(chunk->parent, chunk);
             return true;
@@ -394,6 +409,12 @@ class KiWiPQ {
         return false;
     }
 
+    /**
+     * Synchrinses a list of nodes to be copied aside, modified (either add or remove chunks)
+     * an re-added to the chunk list.
+     * Ensures that index is consistent with the changes.
+     * @param chunk
+     */
     virtual void rebalance(chunk_t* chunk) {
         // 1. engage
         rebalance_object_t* tmp = new_ro(chunk, unset_mark(chunk->next));
@@ -532,6 +553,10 @@ class KiWiPQ {
         } while (true);
     }
 
+    /**
+     * Retrieves a chunk by key
+     * @param key
+     */
     chunk_t* locate_target_chunk(const K& key) {
         if (begin_sentinel.next == &end_sentinel) {
             // the chunk list is empty, we need to create a chunk
@@ -564,6 +589,10 @@ class KiWiPQ {
         return c;
     }
 
+    /**
+     * @param chunk
+     * @return The predecessor of chunk
+     */
     chunk_t* load_prev(chunk_t* chunk) {
         chunk_t* prev = index.get_pred(chunk->min_key); //&begin_sentinel;
         chunk_t* curr = unset_mark(prev->next);
@@ -613,6 +642,11 @@ class KiWiPQ {
         }
     }
 
+    /**
+     * Used to control the amount of rebalances
+     * @param chunk The chunk to test
+     * @return true iff chunk should be added to the rebalance
+     */
     virtual bool policy(volatile chunk_t* chunk) {
         return (chunk->i > (N * 3 / 4) || chunk->i < (N / 4)) && ((rand_range(100)-1) < 10);
     }
@@ -645,7 +679,7 @@ class KiWiPQ {
         chunk_t* chunk;
         do {
             chunk = locate_target_chunk(key);
-        } while(check_rebalance(chunk, key));
+        } while(check_rebalance(chunk));
 
         // allocate cell in linked list
         uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);
