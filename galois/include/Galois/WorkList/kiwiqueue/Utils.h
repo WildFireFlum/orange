@@ -15,7 +15,6 @@
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
 #define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
 
-
 template <typename T>
 static inline bool is_marked(T* i)
 {
@@ -65,6 +64,7 @@ inline unsigned int getNumOfThreads() {
 inline unsigned int getThreadId() {
     return Galois::Runtime::LL::getTID();
 }
+
 #endif
 
 
@@ -103,7 +103,10 @@ inline long rand_range(long r)
     return v;
 }
 
-inline bool flip_a_coin(int p) {
+/**
+ * Flip a coin with success probability p / 100.
+ */
+inline bool flip_a_coin(uint8_t p) {
     return (rand_range(100)-1) < p;
 }
 
