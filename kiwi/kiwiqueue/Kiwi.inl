@@ -392,12 +392,17 @@ protected:
 
     inline void delete_ro(rebalance_object_t* ro) { allocator.deallocate(ro, RO_LIST_LEVEL); }
 
-    inline bool policy_engage(volatile chunk_t* chunk) {
+    static inline bool policy_engage(chunk_t* chunk) {
         return ((chunk->i > ((N * 5) >> 3)) || (chunk->i < (N  >> 3))) && flip_a_coin(15);
     }
 
-    inline bool policy_check_rebalance(volatile chunk_t* chunk) {
+    static inline bool check_rebalance_policy(chunk_t* chunk) {
         return (chunk->i > ((N * 7) >> 3)) && flip_a_coin(5);
+    }
+
+    //static inline bool policy_
+    static inline bool try_pop_policy(chunk_t* chunk) {
+        return flip_a_coin(95);
     }
 
     inline bool check_rebalance(chunk_t* chunk, const K& key) {
@@ -405,14 +410,18 @@ protected:
             normalize(chunk->parent, chunk);
             return true;
         }
-        if (chunk->i >= N || chunk->status == FROZEN_CHUNK || policy_check_rebalance(chunk)) {
+        if (chunk->i >= N || chunk->status == FROZEN_CHUNK || check_rebalance_policy(chunk)) {
             rebalance(chunk);
             return true;
         }
         return false;
     }
 
-    virtual void rebalance(chunk_t* chunk) {
+    void rebalance(chunk_t* chunk) {
+        rebalance(chunk, policy_engage);
+    }
+
+    void rebalance(chunk_t* chunk, bool (* policy)(chunk_t*)) {
         // 1. engage
         start(LI_REBALANCE);
         if (!chunk->ro) {
@@ -430,7 +439,7 @@ protected:
             if (next == nullptr || next == &end_sentinel) {
                 break;
             }
-            if (policy_engage(next)) {
+            if (policy(next)) {
                 ATOMIC_CAS_MB(&(next->ro), nullptr, ro);
 
                 if (next->ro == ro) {
@@ -702,12 +711,16 @@ public:
 
     bool try_pop(K& key) {
         start(LI_POP);
+        bool ret = false;
+
         retry:
+        int count = 0;
         chunk_t* chunk = begin_sentinel.next;
         while (chunk != &end_sentinel) {
             if (chunk->try_pop(compare, key)) {
                 end(LI_POP);
-                return true;
+                ret = true;
+                goto cleanup;
             }
 
             if (chunk->status == FROZEN) {
@@ -721,10 +734,16 @@ public:
 
                 goto retry;
             }
-
+            count++;
             chunk = unset_mark(chunk->next);
         }
-        return false;
+
+        cleanup:
+
+        if (count > 20) {
+            rebalance(begin_sentinel.next, try_pop_policy);
+        }
+        return ret;
     }
 
     /**

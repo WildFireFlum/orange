@@ -41,7 +41,7 @@ class KiWiPQMock : public KiWiPQ<Comparer, Allocator, K, N> {
    protected:
     virtual void rebalance(chunk_t* chunk) {
         ATOMIC_FETCH_AND_INC_FULL(&num_of_rebalances);
-        KiWiPQ<Comparer, Allocator, K, N>::rebalance(chunk);
+        KiWiPQ<Comparer, Allocator, K, N>::rebalance(chunk, this->policy_engage);
     }
 
    private:
