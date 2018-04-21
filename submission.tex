@@ -1,0 +1,135 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%2345678901234567890123456789012345678901234567890123456789012345678901234567890
+%        1         2         3         4         5         6         7         8
+
+\documentclass[letterpaper, 10 pt, conference]{ieeeconf}  % Comment this line out
+                                                          % if you need a4paper
+%\documentclass[a4paper, 10pt, conference]{ieeeconf}      % Use this line for a4
+                                                          % paper
+
+
+% The following packages can be found on http:\\www.ctan.org
+%\usepackage{graphics} % for pdf, bitmapped graphics files
+%\usepackage{epsfig} % for postscript graphics files
+%\usepackage{mathptmx} % assumes new font selection scheme installed
+%\usepackage{times} % assumes new font selection scheme installed
+%\usepackage{amsmath} % assumes amsmath package installed
+%\usepackage{amssymb}  % assumes amsmath package installed
+
+\title{\LARGE \bf
+KiWi as a Priority Queue
+}
+
+%\author{ \parbox{3 in}{\centering Huibert Kwakernaak*
+%         \thanks{*Use the $\backslash$thanks command to put information here}\\
+%         Faculty of Electrical Engineering, Mathematics and Computer Science\\
+%         University of Twente\\
+%         7500 AE Enschede, The Netherlands\\
+%         {\tt\small h.kwakernaak@autsubmit.com}}
+%         \hspace*{ 0.5 in}
+%         \parbox{3 in}{ \centering Pradeep Misra**
+%         \thanks{**The footnote marks may be inserted manually}\\
+%        Department of Electrical Engineering \\
+%         Wright State University\\
+%         Dayton, OH 45435, USA\\
+%         {\tt\small pmisra@cs.wright.edu}}
+%}
+
+\author{Ynon Flum$^{1}$ , Tzlil Gonen$^{2}$ and Matan Hasson$^3$ % <-this % stops a space
+\thanks{$^1$ynonflum@mail.tau.ac.il}% <-this % stops a space
+\thanks{$^2$tzlilgon@mail.tau.ac.il}% <-this % stops a space
+\thanks{$^3$matanhasson@mail.tau.ac.il}% <-this % stops a space
+}
+
+
+\begin{document}
+
+
+
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+
+\textit{KiWi}, an ordered key-value map, can be employed as a large scale priority queue. Evaluation of such implementation is by \textit{Galois} benchmarks.
+
+\end{abstract}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{INTRODUCTION}
+
+\textbf{KiWi} \cite{kiwi} An atomic Key-Value-map which efficiently supports simultaneous large scans and real-time access, implements ordered key-value map supporting the following operations:
+\begin{itemize}
+\item \textit{get(key)}: It is used to return the value for the specified key.
+\end{itemize}
+\begin{itemize}
+\item \textit{put(key,value)}: It is used to insert an entry in this map.
+\item \textit{scan(fromKey, toKey)}: It is used to get all the entries in the given interval.
+\end{itemize}
+Both get() and scan() are wait-free and put() is lock-free. To support wait free scans, KiWi employs multi-versioning. In addition, Data in KiWi is organized as a collection of chunks, which are large blocks of contiguous key ranges. Such data layout is cache-friendly and suitable for non-uniform memory architectures (NUMA).
+Rebalance was the main mechanism which was used in the original KiWi to allow the data structure to run without waiting (as it is a lock-free algorithm).
+In a rebalance, the threads agree on a list of chunks to change (either remove some, add new ones, or a composition of the two).
+
+
+\textbf{Galois} \cite{galios} is a framework which allows the execution and benchmarking of many task-based parallel algorithms. The asynchronous execution is based on a priority queue which holds the tasks to be executed. The framework allows its user to control many of the parameters of a concurrent run, we are specifically interested in the ability to choose the scheduling algorithm. The framework contains the OrderedByIntegerMetric (OBIM) implementation of the priority queue. 
+
+In this work we will implement a priority queue based on KiWi and evaluate it using the applications implemented in Galois. In such implementation, the key can be used as a priority and value as the task to be executed.
+
+
+\section{KiWiPQ}
+
+As the ideas behind the lock-free implementation of KiWi seem interesting enough, we were asked to check whether they could be applied for a priority queue. 
+There were, of course some adjustments which had to be made, both to the API, and 
+to the data structure itself.
+Moreover, the article only describes the algorithm in pseudo-code, and many of the issues which arise when one tries to implement it were not addressed.
+
+The main challenges and differences from the original implementation are as follows:
+
+\subsection{Scans}As scans are not relevant to a priority queue, we removed the associated versioning mechanism which was needed to support them in the original article.
+
+\subsection{Pops}As the original data structure did not support deletions there were out of a rebalance operation, we had to implement a lock free mechanism which allowed us to safely remove elements from the list.
+
+\subsection{Indexing}The original Kiwi indexed its chunks in order to gain performance when searching for a chunk. Yet the authors of the article implemented this mechanism using locks, which in turn damped the performance gain (or outright canceled it).
+In our implementation we used a slightly altered implementation of the lock free skiplist to index the chunks.
+
+\subsection{Testing}As we were required to integrate the algorithm into the Galois framework, which is not easily run on a PC due to its intensive hardware requirements, we had to implement the data structure in a modular way in order for us to be able to test it locally,
+hence our implementation supports using an allocator of choice, which in the case of the Galois framework was an epoch-based allocator.
+
+\section{RELATED WORK}
+As far as we know, no one has previously attempted to convert KiWi's implementation to a priority queue.
+
+
+\subsection{Evaluation}While \textit{Kiwi} has been evaluated before, it was implemented in Java, and was never used as a priority queue. 
+Moreover, \textit{Kiwi} was not implemented in a native language and tested as thoroughly as one might expect, therefore we expect a big performance and performance understanding gain from its integration to the Galois infrastructure.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+
+\begin{thebibliography}{99}
+
+\bibitem{kiwi} Dmitry Basin, Edward Bortnikov, Anastasia Braginsky, Guy GolanGueta, Eshcar Hillel, Idit Keidar, and Moshe Sulamy. 2017. KiWi:
+A Key-Value Map for Scalable Real-Time Analytics. In Proceedings
+of the 22Nd ACM SIGPLAN Symposium on Principles and Practice of
+Parallel Programming (PPoPP ’17). ACM, New York, NY, USA, 357–369.
+\bibitem{galios} D. Nguyen, A. Lenharth, and K. Pingali. A lightweight infrastructure
+for graph analytics. In Proceedings of ACM Symposium on Operating
+Systems Principles, SOSP ’13, pages 456–471, Nov. 2013.
+
+
+
+
+
+
+
+\end{thebibliography}
+
+
+
+
+\end{document}
