@@ -52,7 +52,7 @@ class ConcurrentQueueTest : public QueueTest {
 };
 
 TEST_F(ConcurrentQueueTest, TestConcurrentPushSynchedPop) {
-    const auto num_of_pushes = (KIWI_TEST_CHUNK_SIZE * 64) + 1;
+    const auto num_of_pushes = (KIWI_TEST_CHUNK_SIZE * 30) + 1;
     // Make sure no duplicate values
     const auto min_val = (num_of_pushes / getNumOfThreads()) + 1;
     auto total_inserted = 0;
@@ -114,7 +114,6 @@ TEST_F(ConcurrentQueueTest, TestStressPushPop) {
     const auto num_of_popping_threads = getNumOfThreads() * 0.50;
     const auto num_of_pushing_threads = getNumOfThreads() * 0.50;
 
-    getQueue().setShouldUsePolicy(true);
     // Make sure no duplicate values
     const auto min_val = (num_of_pushes / num_of_pushing_threads) + 1;
 

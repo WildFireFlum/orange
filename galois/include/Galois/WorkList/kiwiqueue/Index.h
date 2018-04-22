@@ -40,7 +40,6 @@ protected:
     uint8_t levelmax;
 
 
-protected:
     void mark_node_ptrs(sl_node_t *n)
     {
         sl_node_t *n_next;
@@ -76,16 +75,34 @@ protected:
         allocator.reclaim(n, n->toplevel-1);
     }
 
-public:
+    inline int get_rand_level()
+    {
+        int i, level = 1;
+        for (i = 0; i < levelmax - 1; i++)
+        {
+            if (flip_a_coin(50))
+                level++;
+            else
+                break;
+        }
+        /* 1 <= level <= *levelmax */
+        return level;
+    }
 
-    Index(Allocator& r_allocator, const V& val) : allocator(r_allocator), levelmax(INDEX_SKIPLIST_LEVELS) {
-        sl_node_t *min, *max;
+    bool complete_pop(sl_node_t *first)
+    {
+        sl_node_t *next = first->next[0];
 
-        max = sl_new_node(levelmax, NULL);
-        min = sl_new_node(levelmax, max);
+        if (is_marked(next) ||
+            !ATOMIC_CAS_MB(&first->next[0], next, set_mark(next)))
+            return false;
 
-        head = min;
-        head->val = val;
+        mark_node_ptrs(first);
+
+        fraser_search(first->key, NULL, NULL, first);
+        sl_reclaim_node(first);
+
+        return true;
     }
 
     void fraser_search(const K& key, sl_node_t **left_list, sl_node_t **right_list, sl_node_t *dead)
@@ -147,21 +164,26 @@ public:
         }
     }
 
-    int get_rand_level()
-    {
-        int i, level = 1;
-        for (i = 0; i < levelmax - 1; i++)
-        {
-            if ((rand_range(100)-1) < 50)
-                level++;
-            else
-                break;
-        }
-        /* 1 <= level <= *levelmax */
-        return level;
+public:
+
+    Index(Allocator& r_allocator, const V& val) : allocator(r_allocator), levelmax(INDEX_SKIPLIST_LEVELS) {
+        sl_node_t *min, *max;
+
+        max = sl_new_node(levelmax, NULL);
+        min = sl_new_node(levelmax, max);
+
+        head = min;
+        head->val = val;
     }
 
-    bool push_conditional(const K& key, const V& prev, const V& val)
+
+    V& load_prev(const K &key) {
+        sl_node_t *succs[levelmax], *preds[levelmax];
+        fraser_search(key, preds, succs, nullptr);
+        return preds[0]->val;
+    }
+
+    bool put_conditional(const K &key, const V &prev, const V &val)
     {
         sl_node_t *newn, *new_next, *pred, *succ, *succs[levelmax], *preds[levelmax];
         bool result;
@@ -171,7 +193,7 @@ public:
         retry:
         fraser_search(key, preds, succs, NULL);
         if (succs[0]->key == key || preds[0]->val != prev)
-        {                             /* Value already in list */
+        {
             result = false;
             sl_reclaim_node(newn);
             goto end;
@@ -222,44 +244,24 @@ public:
         return result;
     }
 
-
-    bool complete_pop(sl_node_t *first)
-    {
-        sl_node_t *next = first->next[0];
-
-        if (is_marked(next) ||
-            !ATOMIC_CAS_MB(&first->next[0], next, set_mark(next)))
-            return false;
-
-        mark_node_ptrs(first);
-
-        fraser_search(first->key, NULL, NULL, first);
-        sl_reclaim_node(first);
-
-        return true;
-    }
-
-    // in case the key is in
-    V& get_pred(const K& key) {
-        sl_node_t *succs[levelmax], *preds[levelmax];
-        fraser_search(key, preds, succs, nullptr);
-        return preds[0]->val;
-    }
-
-    bool pop_conditional(const K& key, const V& val) {
+    bool delete_conditional(const K &key, const V &val) {
         sl_node_t *succs[levelmax], *preds[levelmax], * pred, * first;
         fraser_search(key, preds, succs, nullptr);
         pred = preds[0];
-
         first = pred->next[0];
+
+        // Traverse the list from pred as long as the key <= first->key (aka !compare(key, first->key))
+        // or until we find a node with matching key val
         while (!is_marked(first) && !compare(key, first->key)  && (first->key != key || first->val != val)) {
             first = first->next[0];
         }
 
-
+        // Pop in case we found a node
         if (!is_marked(first) && first->key == key && first->val == val) {
             return complete_pop(first);
         }
+
+        // This node is longer in the list - return false
         return false;
     }
 };

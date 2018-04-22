@@ -8,14 +8,12 @@
 #include <cstdio>
 #include <fcntl.h>
 
-#define KIWI_DEFAULT_CHUNK_SIZE 1024
 #define INDEX_SKIPLIST_LEVELS	20
 #define RO_LIST_LEVEL           21
 #define CHUNK_LIST_LEVEL        22
 
 #define ATOMIC_CAS_MB(p, o, n) __sync_bool_compare_and_swap(p, o, n)
 #define ATOMIC_FETCH_AND_INC_FULL(p) __sync_fetch_and_add(p, 1)
-
 
 template <typename T>
 static inline bool is_marked(T* i)
@@ -66,6 +64,7 @@ inline unsigned int getNumOfThreads() {
 inline unsigned int getThreadId() {
     return Galois::Runtime::LL::getTID();
 }
+
 #endif
 
 
@@ -102,6 +101,13 @@ inline long rand_range(long r)
     long v = xorshf96(seeds, seeds + 1, seeds + 2) % r;
     v++;
     return v;
+}
+
+/**
+ * Flip a coin with success probability p / 100.
+ */
+inline bool flip_a_coin(uint8_t p) {
+    return (rand_range(100)-1) < p;
 }
 
 #endif //__KIWI_UTILS_H__

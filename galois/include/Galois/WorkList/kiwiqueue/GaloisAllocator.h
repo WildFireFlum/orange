@@ -12,7 +12,7 @@ public:
     }
 
     inline void deallocate(void* ptr, unsigned int listIndex) {
-        heap[(term.getEpoch() + 2)% 3].deallocate(ptr, listIndex);
+        heap[term.getEpoch()% 3].deallocate(ptr, listIndex);
     }
 
     inline void reclaim(void* ptr, unsigned int listIndex) {

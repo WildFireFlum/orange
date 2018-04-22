@@ -28,12 +28,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <iostream>
 
-#include <vector>
-#include <iostream>
-#include <csignal>
-
+#include <climits>
 #include "WLCompileCheck.h"
 
 #include "Galois/Runtime/Termination.h"
@@ -43,11 +39,6 @@
 
 #include <boost/iterator/iterator_facade.hpp>
 #include <boost/heap/d_ary_heap.hpp>
-
-#include <climits>
-#include <cstdint>
-#include <set>
-#include <algorithm>
 
 #define MEM_BARRIER     asm volatile("":::"memory")
 #define ATOMIC_CAS_MB(p, o, n)  __sync_bool_compare_and_swap(p, o, n)
@@ -365,25 +356,21 @@ protected:
   }
 
   inline sl_node_t *sl_new_node(int levelmax, sl_node_t *next) {
-    int e = term.getEpoch();
-    std::cout << "TID: " << Galois::Runtime::LL::getTID() << " Current deallocate epoch: " << e << "\n";
-    e %= 3;
-    sl_node_t *node = reinterpret_cast<sl_node_t *>(heap[e].allocate(sizeof(sl_node_t) + levelmax*sizeof(sl_node_t*), levelmax-1));
-    node->init(levelmax, next);
-    return node;
+      int e = term.getEpoch() % 3;
+      sl_node_t *node = reinterpret_cast<sl_node_t *>(heap[e].allocate(sizeof(sl_node_t) + levelmax*sizeof(sl_node_t*), levelmax-1));
+      node->init(levelmax, next);
+      return node;
   }
 
   inline sl_node_t *sl_new_node_key(K key, int levelmax) {
-    sl_node_t *node = sl_new_node(levelmax, 0);
-    node->key = key;
-    return node;
+      sl_node_t *node = sl_new_node(levelmax, 0);
+      node->key = key;
+      return node;
   }
 
   inline void sl_delete_node(sl_node_t *n) {
-    int e = (term.getEpoch() + 2);
-    std::cout << "TID: " << Galois::Runtime::LL::getTID() << " Current deallocate epoch: " << e << "\n";
-    e %= 3;
-    heap[e].deallocate(n, n->toplevel-1);
+      int e = (term.getEpoch() + 2) % 3;
+      heap[e].deallocate(n, n->toplevel-1);
   }
 
 public:
