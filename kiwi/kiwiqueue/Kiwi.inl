@@ -399,7 +399,7 @@ protected:
         return (chunk->i > ((N * 7) >> 3)) && flip_a_coin(5);
     }
 
-    inline bool check_rebalance(chunk_t* chunk, const K& key) {
+    inline bool check_rebalance(chunk_t* chunk) {
         if (chunk->status == INFANT_CHUNK) {
             normalize(chunk->parent, chunk);
             return true;
@@ -568,7 +568,7 @@ protected:
             }
         }
 
-        chunk_t* c = index.get_pred(key);
+        chunk_t* c = index.load_prev(key);
         chunk_t* next = unset_mark(c->next);
 
         while (next != &end_sentinel && !compare(next->min_key, key)) {
@@ -585,7 +585,7 @@ protected:
     }
 
     chunk_t* load_prev(chunk_t* chunk) {
-        chunk_t* prev = index.get_pred(chunk->min_key);
+        chunk_t* prev = index.load_prev(chunk->min_key);
         chunk_t* curr = unset_mark(prev->next);
 
         while (curr != chunk && curr != &end_sentinel &&
@@ -610,7 +610,7 @@ protected:
             // pop out old chunks from index
             do {
                 next = unset_mark(curr->next);
-                index.pop_conditional(curr->min_key, curr);
+                index.delete_conditional(curr->min_key, curr);
                 curr = next;
             } while (ro == curr->ro);
         }
@@ -621,9 +621,9 @@ protected:
             while (parent == curr->parent && curr->status == INFANT_CHUNK) {
                 next = unset_mark(curr->next);
                 while (true) {
-                    pred = index.get_pred(curr->min_key);
+                    pred = index.load_prev(curr->min_key);
                     if (curr->status != INFANT_CHUNK) break;
-                    if (index.push_conditional(curr->min_key, pred, curr)) {
+                    if (index.put_conditional(curr->min_key, pred, curr)) {
                         ATOMIC_CAS_MB(&(curr->status), INFANT_CHUNK, NORMAL_CHUNK);
                         break;
                     }
@@ -668,7 +668,7 @@ public:
         chunk_t* chunk;
         do {
             chunk = locate_target_chunk(key);
-        } while(check_rebalance(chunk, key));
+        } while(check_rebalance(chunk));
 
         // allocate cell in linked list
         uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);
@@ -700,7 +700,7 @@ public:
                 return true;
             }
 
-            if (chunk->status == FROZEN) {
+            if (check_rebalance(chunk)) {
                 // chunk is being rebalanced so we have to help it (otherwise the algorithm
                 // is not lock free) but since only one thread can finish rebalance
                 // successfully we prefer to wait for a little while before we help it:
