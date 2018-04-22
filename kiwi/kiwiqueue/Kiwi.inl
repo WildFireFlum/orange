@@ -399,7 +399,7 @@ protected:
         return (chunk->i > ((N * 7) >> 3)) && flip_a_coin(5);
     }
 
-    inline bool check_rebalance(chunk_t* chunk, const K& key) {
+    inline bool check_rebalance(chunk_t* chunk) {
         if (chunk->status == INFANT_CHUNK) {
             normalize(chunk->parent, chunk);
             return true;
@@ -668,7 +668,7 @@ public:
         chunk_t* chunk;
         do {
             chunk = locate_target_chunk(key);
-        } while(check_rebalance(chunk, key));
+        } while(check_rebalance(chunk));
 
         // allocate cell in linked list
         uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);
@@ -700,15 +700,8 @@ public:
                 return true;
             }
 
-            if (chunk->status == FROZEN) {
-                // chunk is being rebalanced so we have to help it (otherwise the algorithm
-                // is not lock free) but since only one thread can finish rebalance
-                // successfully we prefer to wait for a little while before we help it:
-                // we flip a coin and join the rebalance with probability JOIN_REBALACNE_PERCENTAGE / 100
-                if (chunk == begin_sentinel.next || flip_a_coin(JOIN_REBALACNE_PERCENTAGE)) {
-                    rebalance(chunk);
-                }
-
+            // the chunk is empty, check if it is required to rebalance it
+            if (check_rebalance(chunk)) {
                 goto retry;
             }
 
