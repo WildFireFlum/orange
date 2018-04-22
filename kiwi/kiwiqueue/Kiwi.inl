@@ -399,7 +399,7 @@ protected:
         return (chunk->i > ((N * 7) >> 3)) && flip_a_coin(5);
     }
 
-    inline bool check_rebalance(chunk_t* chunk) {
+    inline bool check_rebalance(chunk_t* chunk, const K& key) {
         if (chunk->status == INFANT_CHUNK) {
             normalize(chunk->parent, chunk);
             return true;
@@ -668,7 +668,7 @@ public:
         chunk_t* chunk;
         do {
             chunk = locate_target_chunk(key);
-        } while(check_rebalance(chunk));
+        } while(check_rebalance(chunk, key));
 
         // allocate cell in linked list
         uint32_t i = ATOMIC_FETCH_AND_INC_FULL(&chunk->i);
@@ -700,7 +700,7 @@ public:
                 return true;
             }
 
-            if (check_rebalance(chunk)) {
+            if (chunk->status == FROZEN) {
                 // chunk is being rebalanced so we have to help it (otherwise the algorithm
                 // is not lock free) but since only one thread can finish rebalance
                 // successfully we prefer to wait for a little while before we help it:
